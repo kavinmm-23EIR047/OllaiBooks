@@ -1,0 +1,11 @@
+pyproject.toml
+src/billpilot_voice_worker/__init__.py
+src/billpilot_voice_worker/agent.py
+src/billpilot_voice_worker/gateway.py
+src/billpilot_voice_worker/security.py
+src/billpilot_voice_worker.egg-info/PKG-INFO
+src/billpilot_voice_worker.egg-info/SOURCES.txt
+src/billpilot_voice_worker.egg-info/dependency_links.txt
+src/billpilot_voice_worker.egg-info/requires.txt
+src/billpilot_voice_worker.egg-info/top_level.txt
+tests/test_agent.py

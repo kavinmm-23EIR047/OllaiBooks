@@ -1,0 +1,1025 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  MANAGER
+  ACCOUNTANT
+  SALES
+  STAFF
+  VIEWER
+  AUDITOR
+}
+
+enum SubscriptionTier {
+  STARTER
+  GROWTH
+  BUSINESS_AI
+  ENTERPRISE
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  UNPAID
+}
+
+enum PlatformType {
+  CUSTOM
+  SHOPIFY
+  WOOCOMMERCE
+  WORDPRESS
+  MAGENTO
+  API
+}
+
+enum IntegrationStatus {
+  ACTIVE
+  PAUSED
+  ERROR
+  DISCONNECTED
+}
+
+enum WebhookStatus {
+  PENDING
+  PROCESSED
+  FAILED
+  IGNORED
+}
+
+enum PaymentStatus {
+  PENDING
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  FAILED
+  REFUNDED
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  RETURNED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  CANCELLED
+  CREDITED
+}
+
+enum InvoiceType {
+  TAX_INVOICE
+  PROFORMA
+  CREDIT_NOTE
+  ESTIMATE
+}
+
+enum PaymentMethod {
+  CASH
+  UPI
+  BANK_TRANSFER
+  CARD
+  PAYMENT_GATEWAY
+  OTHER
+}
+
+enum MessageChannel {
+  WHATSAPP
+  EMAIL
+  SMS
+}
+
+enum ConsentStatus {
+  GRANTED
+  REVOKED
+}
+
+enum MessageStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+enum VoiceCallStatus {
+  QUEUED
+  SKIPPED
+  CANCELED
+  RINGING
+  IN_PROGRESS
+  COMPLETED
+  BUSY
+  NO_ANSWER
+  FAILED
+  ESCALATED
+}
+
+enum VoiceCallDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum VoiceCallOutcome {
+  WILL_PAY
+  PAID_ALREADY
+  DISPUTED
+  WRONG_NUMBER
+  CALL_LATER
+  DO_NOT_CALL
+  NO_ANSWER
+  TRANSFERRED
+}
+
+enum AutomationTrigger {
+  ORDER_CREATED
+  ORDER_CONFIRMED
+  ORDER_PAID
+  INVOICE_CREATED
+  INVOICE_OVERDUE
+  PAYMENT_RECEIVED
+  CALL_COMPLETED
+}
+
+enum ReportType {
+  SALES_SUMMARY
+  DAILY_SALES
+  MONTHLY_SALES
+  INVOICE_REGISTER
+  TAX_GST_REPORT
+  OUTSTANDING_PAYMENTS
+  CUSTOMER_LEDGER
+  COMMUNICATION_METRICS
+  SUBSCRIPTION_USAGE
+}
+
+enum ReportFormat {
+  CSV
+  XLSX
+  PDF
+}
+
+enum ReportStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+// -------------------------------------------------------------
+// Core Multi-Tenant Models
+// -------------------------------------------------------------
+
+model Tenant {
+  id                 String   @id @default(uuid())
+  name               String
+  slug               String   @unique
+  domain             String?  @unique
+  logoUrl            String?
+  currency           String   @default("INR")
+  timezone           String   @default("Asia/Kolkata")
+  isActive           Boolean  @default(true)
+  isSuspended        Boolean  @default(false)
+  offlineLicenseHash String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  businessProfile       BusinessProfile?
+  members               TenantMember[]
+  subscriptions         TenantSubscription[]
+  subscriptionInvoices  SubscriptionInvoice[]
+  connectedWebsites     ConnectedWebsite[]
+  webhookEvents         WebhookEvent[]
+  customers             Customer[]
+  products              Product[]
+  orders                Order[]
+  invoices              Invoice[]
+  offlinePosSales       OfflinePosSale[]
+  payments              Payment[]
+  creditNotes           CreditNote[]
+  whatsappAccounts      WhatsAppAccount[]
+  whatsappTemplates     WhatsAppTemplate[]
+  messageLogs           MessageLog[]
+  voiceAgentConfig      VoiceAgentConfig?
+  voiceCalls            VoiceCall[]
+  voiceCampaigns        VoiceCampaign[]
+  voiceContactConsents  ContactConsent[]
+  doNotCallEntries      DoNotCall[]
+  automationWorkflows   AutomationWorkflow[]
+  automationRuns        AutomationRun[]
+  usageRecords          UsageRecord[]
+  reportJobs            ReportJob[]
+  auditLogs             AuditLog[]
+  communicationConsents CommunicationConsent[]
+  invoiceShares         InvoiceShare[]
+
+  @@map("tenants")
+}
+
+model BusinessProfile {
+  id                   String   @id @default(uuid())
+  tenantId             String   @unique
+  tenant               Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  legalName            String
+  tradeName            String?
+  panNumber            String?
+  gstin                String?
+  email                String
+  phone                String
+  website              String?
+  streetAddress        String
+  city                 String
+  state                String
+  postalCode           String
+  country              String   @default("India")
+  invoicePrefix        String   @default("INV-")
+  invoiceNextNumber    Int      @default(1001)
+  creditNotePrefix     String   @default("CN-")
+  creditNoteNextNumber Int      @default(1)
+  defaultPaymentTerms  String?  @default("Due in 15 days")
+  notes                String?
+  bankName             String?
+  accountNumber        String?
+  ifscCode             String?
+  upiId                String?
+  updatedAt            DateTime @updatedAt
+
+  @@map("business_profiles")
+}
+
+model User {
+  id              String   @id @default(uuid())
+  email           String   @unique
+  passwordHash    String
+  firstName       String
+  lastName        String
+  phone           String?
+  avatarUrl       String?
+  isPlatformAdmin Boolean  @default(false)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  tenantMemberships TenantMember[]
+  verifiedPayments  Payment[]      @relation("VerifiedByUser")
+  requestedReports  ReportJob[]    @relation("RequestedByUser")
+  auditLogs         AuditLog[]
+
+  @@map("users")
+}
+
+model TenantMember {
+  id          String   @id @default(uuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role        Role     @default(STAFF)
+  permissions String[] @default([])
+  isActive    Boolean  @default(true)
+  joinedAt    DateTime @default(now())
+
+  @@unique([tenantId, userId])
+  @@index([userId])
+  @@map("tenant_members")
+}
+
+// -------------------------------------------------------------
+// SaaS Subscription & Billing Models
+// -------------------------------------------------------------
+
+model SubscriptionPlan {
+  id                     String           @id @default(uuid())
+  code                   String           @unique
+  name                   String
+  description            String?
+  tier                   SubscriptionTier @default(STARTER)
+  priceMonthly           Decimal          @db.Decimal(12, 2)
+  priceAnnual            Decimal          @db.Decimal(12, 2)
+  maxWebsites            Int              @default(1)
+  maxInvoicesMonthly     Int              @default(500)
+  maxWhatsAppMonthly     Int              @default(1000)
+  maxEmailsMonthly       Int              @default(2000)
+  maxVoiceMinutesMonthly Int              @default(0)
+  maxStaff               Int              @default(2)
+  aiAssistant            Boolean          @default(false)
+  voiceAgent             Boolean          @default(false)
+  customBranding         Boolean          @default(false)
+  advancedAnalytics      Boolean          @default(false)
+  isActive               Boolean          @default(true)
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
+
+  subscriptions TenantSubscription[]
+
+  @@map("subscription_plans")
+}
+
+model TenantSubscription {
+  id                 String             @id @default(uuid())
+  tenantId           String
+  tenant             Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  planId             String
+  plan               SubscriptionPlan   @relation(fields: [planId], references: [id])
+  status             SubscriptionStatus @default(ACTIVE)
+  billingInterval    String             @default("monthly") // monthly or annual
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  cancelAtPeriodEnd  Boolean            @default(false)
+  trialEndsAt        DateTime?
+  externalCustomerId String?
+  externalSubId      String?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  @@map("tenant_subscriptions")
+}
+
+model SubscriptionInvoice {
+  id            String        @id @default(uuid())
+  tenantId      String
+  tenant        Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invoiceNumber String        @unique
+  amount        Decimal       @db.Decimal(12, 2)
+  currency      String        @default("INR")
+  status        PaymentStatus @default(PAID)
+  periodStart   DateTime
+  periodEnd     DateTime
+  paidAt        DateTime?
+  receiptUrl    String?
+  createdAt     DateTime      @default(now())
+
+  @@map("subscription_invoices")
+}
+
+// -------------------------------------------------------------
+// Website Integration & Webhook Models
+// -------------------------------------------------------------
+
+model ConnectedWebsite {
+  id                     String            @id @default(uuid())
+  tenantId               String
+  tenant                 Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name                   String
+  domain                 String
+  platform               PlatformType      @default(CUSTOM)
+  apiKey                 String            @unique
+  apiSecretHash          String
+  webhookSecretEncrypted String
+  status                 IntegrationStatus @default(ACTIVE)
+  lastSyncAt             DateTime?
+  lastWebhookAt          DateTime?
+  failedEventsCount      Int               @default(0)
+  totalOrdersSynced      Int               @default(0)
+  createdAt              DateTime          @default(now())
+  updatedAt              DateTime          @updatedAt
+
+  webhookEvents WebhookEvent[]
+  orders        Order[]
+
+  @@index([tenantId, status])
+  @@map("connected_websites")
+}
+
+model WebhookEvent {
+  id              String            @id @default(uuid())
+  tenantId        String
+  tenant          Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  websiteId       String?
+  website         ConnectedWebsite? @relation(fields: [websiteId], references: [id], onDelete: SetNull)
+  eventType       String
+  externalEventId String?
+  idempotencyKey  String            @unique
+  payload         Json
+  status          WebhookStatus     @default(PENDING)
+  errorMessage    String?
+  retryCount      Int               @default(0)
+  processedAt     DateTime?
+  createdAt       DateTime          @default(now())
+
+  @@index([tenantId, status])
+  @@map("webhook_events")
+}
+
+// -------------------------------------------------------------
+// Customers & Catalog
+// -------------------------------------------------------------
+
+model Customer {
+  id                   String    @id @default(uuid())
+  tenantId             String
+  tenant               Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  externalCustomerId   String?
+  name                 String
+  email                String?
+  phone                String?
+  gstin                String?
+  billingStreet        String?
+  billingCity          String?
+  billingState         String?
+  billingPostalCode    String?
+  shippingStreet       String?
+  shippingCity         String?
+  shippingState        String?
+  shippingPostalCode   String?
+  preferredLanguage    String    @default("en")
+  communicationConsent Boolean   @default(false)
+  isArchived           Boolean   @default(false)
+  tags                 String[]  @default([])
+  balanceDue           Decimal   @default(0) @db.Decimal(12, 2)
+  totalOrdersCount     Int       @default(0)
+  totalSpent           Decimal   @default(0) @db.Decimal(12, 2)
+  lastOrderAt          DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  orders                Order[]
+  invoices              Invoice[]
+  payments              Payment[]
+  voiceCalls            VoiceCall[]
+  voiceContactConsents  ContactConsent[]
+  communicationConsents CommunicationConsent[]
+
+  @@index([tenantId, phone])
+  @@index([tenantId, email])
+  @@index([tenantId, isArchived, createdAt(sort: Desc)])
+  @@index([tenantId, name])
+  @@index([tenantId, balanceDue])
+  @@index([tenantId, isArchived, balanceDue(sort: Desc)], map: "customers_tenant_archived_balance_idx")
+  @@map("customers")
+}
+
+model Product {
+  id             String   @id @default(uuid())
+  tenantId       String
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name           String
+  sku            String
+  unit           String   @default("unit")
+  currency       String   @default("INR")
+  taxCategory    String?
+  hsnCode        String?
+  description    String?
+  unitPrice      Decimal  @db.Decimal(12, 2)
+  taxRate        Decimal  @default(0) @db.Decimal(5, 2) // e.g. 18.00%
+  isTaxInclusive Boolean  @default(false)
+  stockQuantity  Int      @default(0)
+  isArchived     Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  orderItems   OrderItem[]
+  invoiceItems InvoiceItem[]
+
+  @@unique([tenantId, sku])
+  @@index([tenantId, isArchived, createdAt(sort: Desc)])
+  @@index([tenantId, name])
+  @@map("products")
+}
+
+// -------------------------------------------------------------
+// Orders & Smart Billing / Invoices
+// -------------------------------------------------------------
+
+model Order {
+  id              String            @id @default(uuid())
+  tenantId        String
+  tenant          Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  websiteId       String?
+  website         ConnectedWebsite? @relation(fields: [websiteId], references: [id], onDelete: SetNull)
+  customerId      String?
+  customer        Customer?         @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  externalOrderId String?
+  orderNumber     String
+  subtotal        Decimal           @db.Decimal(12, 2)
+  discountTotal   Decimal           @default(0) @db.Decimal(12, 2)
+  taxTotal        Decimal           @default(0) @db.Decimal(12, 2)
+  shippingTotal   Decimal           @default(0) @db.Decimal(12, 2)
+  total           Decimal           @db.Decimal(12, 2)
+  currency        String            @default("INR")
+  paymentStatus   PaymentStatus     @default(PENDING)
+  orderStatus     OrderStatus       @default(PENDING)
+  orderDate       DateTime          @default(now())
+  rawPayload      Json?
+  invoiceId       String?           @unique
+  invoice         Invoice?          @relation("OrderToInvoice", fields: [invoiceId], references: [id])
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  items      OrderItem[]
+  voiceCalls VoiceCall[]
+
+  @@unique([websiteId, externalOrderId])
+  @@index([tenantId, orderDate(sort: Desc)])
+  @@index([tenantId, paymentStatus, orderDate(sort: Desc)], map: "orders_tenant_paymentstatus_orderdate_idx")
+  @@index([tenantId, paymentStatus])
+  @@index([tenantId, orderStatus, createdAt(sort: Desc)])
+  @@index([tenantId, customerId])
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@map("orders")
+}
+
+model OrderItem {
+  id        String   @id @default(uuid())
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId String?
+  product   Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  name      String
+  sku       String?
+  quantity  Int
+  unitPrice Decimal  @db.Decimal(12, 2)
+  discount  Decimal  @default(0) @db.Decimal(12, 2)
+  taxRate   Decimal  @default(0) @db.Decimal(5, 2)
+  taxAmount Decimal  @default(0) @db.Decimal(12, 2)
+  total     Decimal  @db.Decimal(12, 2)
+
+  @@index([orderId])
+  @@index([productId])
+  @@map("order_items")
+}
+
+model OfflinePosSale {
+  id             String   @id @default(uuid())
+  tenantId       String
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  clientSaleId   String
+  sale           Json
+  clientUpdatedAt DateTime?
+  syncedAt       DateTime @default(now())
+
+  @@unique([tenantId, clientSaleId])
+  @@index([tenantId, syncedAt(sort: Desc)])
+  @@map("offline_pos_sales")
+}
+
+model Invoice {
+  id             String        @id @default(uuid())
+  tenantId       String
+  tenant         Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customerId     String?
+  customer       Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  order          Order?        @relation("OrderToInvoice")
+  invoiceNumber  String
+  idempotencyKey String?
+  currency       String        @default("INR")
+  invoiceType    InvoiceType   @default(TAX_INVOICE)
+  issueDate      DateTime      @default(now())
+  dueDate        DateTime
+  subtotal       Decimal       @db.Decimal(12, 2)
+  discountTotal  Decimal       @default(0) @db.Decimal(12, 2)
+  cgstTotal      Decimal       @default(0) @db.Decimal(12, 2)
+  sgstTotal      Decimal       @default(0) @db.Decimal(12, 2)
+  igstTotal      Decimal       @default(0) @db.Decimal(12, 2)
+  taxTotal       Decimal       @default(0) @db.Decimal(12, 2)
+  shipping       Decimal       @default(0) @db.Decimal(12, 2)
+  grandTotal     Decimal       @db.Decimal(12, 2)
+  paidAmount     Decimal       @default(0) @db.Decimal(12, 2)
+  balanceDue     Decimal       @db.Decimal(12, 2)
+  status         InvoiceStatus @default(ISSUED)
+  pdfUrl         String?
+  notes          String?
+  paymentTerms   String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  items       InvoiceItem[]
+  payments    Payment[]
+  creditNotes CreditNote[]
+  shares      InvoiceShare[]
+  voiceCalls  VoiceCall[]
+
+  @@unique([tenantId, invoiceNumber])
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, status, createdAt(sort: Desc)])
+  @@index([tenantId, issueDate(sort: Desc)])
+  @@index([tenantId, customerId])
+  @@index([tenantId, dueDate])
+  @@index([tenantId, status, dueDate], map: "invoices_tenant_status_duedate_idx")
+  @@index([tenantId, balanceDue])
+  @@map("invoices")
+}
+
+model InvoiceItem {
+  id         String   @id @default(uuid())
+  invoiceId  String
+  invoice    Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  productId  String?
+  product    Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  name       String
+  sku        String?
+  hsnCode    String?
+  quantity   Int
+  unitPrice  Decimal  @db.Decimal(12, 2)
+  discount   Decimal  @default(0) @db.Decimal(12, 2)
+  taxRate    Decimal  @default(0) @db.Decimal(5, 2)
+  cgstAmount Decimal  @default(0) @db.Decimal(12, 2)
+  sgstAmount Decimal  @default(0) @db.Decimal(12, 2)
+  igstAmount Decimal  @default(0) @db.Decimal(12, 2)
+  total      Decimal  @db.Decimal(12, 2)
+
+  @@index([invoiceId])
+  @@index([productId])
+  @@map("invoice_items")
+}
+
+model Payment {
+  id                   String        @id @default(uuid())
+  tenantId             String
+  tenant               Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invoiceId            String
+  invoice              Invoice       @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  customerId           String?
+  customer             Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  paymentNumber        String
+  idempotencyKey       String?
+  amount               Decimal       @db.Decimal(12, 2)
+  currency             String        @default("INR")
+  paymentMethod        PaymentMethod @default(UPI)
+  gatewayTransactionId String?
+  paymentDate          DateTime      @default(now())
+  status               PaymentStatus @default(PAID)
+  notes                String?
+  verifiedByUserId     String?
+  verifiedByUser       User?         @relation("VerifiedByUser", fields: [verifiedByUserId], references: [id], onDelete: SetNull)
+  createdAt            DateTime      @default(now())
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, invoiceId])
+  @@index([tenantId, status, createdAt(sort: Desc)])
+  @@index([tenantId, customerId])
+  @@index([tenantId, paymentDate(sort: Desc)])
+  @@index([tenantId, status, paymentDate(sort: Desc)], map: "payments_tenant_status_paymentdate_idx")
+  @@map("payments")
+}
+
+model CreditNote {
+  id               String   @id @default(uuid())
+  tenantId         String
+  tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invoiceId        String
+  invoice          Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  creditNoteNumber String
+  amount           Decimal  @db.Decimal(12, 2)
+  reason           String
+  issueDate        DateTime @default(now())
+  status           String   @default("ISSUED")
+  createdAt        DateTime @default(now())
+
+  @@unique([tenantId, creditNoteNumber])
+  @@map("credit_notes")
+}
+
+model InvoiceShare {
+  id         String    @id @default(uuid())
+  tenantId   String
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invoiceId  String
+  invoice    Invoice   @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  createdAt  DateTime  @default(now())
+  accessedAt DateTime?
+
+  @@index([tenantId, invoiceId, expiresAt])
+  @@map("invoice_shares")
+}
+
+model CommunicationConsent {
+  id         String         @id @default(uuid())
+  tenantId   String
+  tenant     Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customerId String
+  customer   Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  channel    MessageChannel
+  status     ConsentStatus  @default(REVOKED)
+  source     String
+  grantedAt  DateTime?
+  revokedAt  DateTime?
+  updatedAt  DateTime       @updatedAt
+  createdAt  DateTime       @default(now())
+
+  @@unique([tenantId, customerId, channel])
+  @@index([tenantId, channel, status])
+  @@index([customerId])
+  @@map("communication_consents")
+}
+
+// -------------------------------------------------------------
+// WhatsApp & Communication
+// -------------------------------------------------------------
+
+model WhatsAppAccount {
+  id                   String    @id @default(uuid())
+  tenantId             String    @unique
+  tenant               Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  provider             String    @default("META_CLOUD")
+  phoneNumberId        String
+  wabaId               String
+  accessTokenEncrypted String
+  invoiceTemplateName  String    @default("invoice_notification")
+  templateLanguage     String    @default("en")
+  status               String    @default("ACTIVE")
+  verifiedAt           DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@map("whatsapp_accounts")
+}
+
+model WhatsAppTemplate {
+  id         String   @id @default(uuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name       String
+  category   String   @default("UTILITY") // UTILITY, MARKETING, AUTHENTICATION
+  language   String   @default("en")
+  bodyText   String
+  status     String   @default("APPROVED")
+  approvedAt DateTime @default(now())
+
+  @@unique([tenantId, name, language])
+  @@map("whatsapp_templates")
+}
+
+model MessageLog {
+  id                String         @id @default(uuid())
+  tenantId          String
+  tenant            Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  channel           MessageChannel @default(WHATSAPP)
+  recipient         String
+  templateName      String?
+  content           String
+  status            MessageStatus  @default(SENT)
+  errorMessage      String?
+  externalMessageId String?
+  sentAt            DateTime       @default(now())
+
+  @@index([tenantId, channel, status])
+  @@index([tenantId, sentAt(sort: Desc)])
+  @@map("message_logs")
+}
+
+// -------------------------------------------------------------
+// AI Voice Calling Agent
+// -------------------------------------------------------------
+
+model VoiceAgentConfig {
+  id                  String   @id @default(uuid())
+  tenantId            String   @unique
+  tenant              Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  isEnabled           Boolean  @default(false)
+  language            String   @default("en")
+  voiceId             String   @default("default")
+  greeting            String   @default("") @db.Text
+  callingWindowStart  String   @default("09:00")
+  callingWindowEnd    String   @default("19:00")
+  maxAttempts         Int      @default(3)
+  agentSecretHash     String?
+  provider            String   @default("TWILIO_VAPI")
+  callerIdNumber      String?
+  voiceModel          String   @default("standard-in-neutral")
+  promptInstructions  String?
+  dailyCallLimit      Int      @default(50)
+  maxCallDuration     Int      @default(300) // in seconds
+  operatingHoursStart String   @default("10:00")
+  operatingHoursEnd   String   @default("19:00")
+  timezone            String   @default("Asia/Kolkata")
+  updatedAt           DateTime @updatedAt
+  createdAt           DateTime @default(now())
+
+  webhookNonces      VoiceWebhookNonce[]
+  webhookRateBuckets VoiceWebhookRateBucket[]
+
+  @@map("voice_agent_configs")
+}
+
+model VoiceCall {
+  id              String             @id @default(uuid())
+  tenantId        String
+  tenant          Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customerId      String?
+  customer        Customer?          @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  orderId         String?
+  order           Order?             @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  invoiceId       String?
+  invoice         Invoice?           @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  campaignId      String?
+  campaign        VoiceCampaign?     @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  callSid         String?            @unique
+  toNumber        String
+  purpose         String             @default("ORDER_CONFIRMATION")
+  direction       VoiceCallDirection @default(OUTBOUND)
+  status          VoiceCallStatus    @default(QUEUED)
+  outcome         VoiceCallOutcome?
+  durationSeconds Int                @default(0)
+  transcript      String?            @db.Text
+  recordingUrl    String?
+  summary         String?            @db.Text
+  skipReason      String?            @db.Text
+  cost            Decimal            @default(0) @db.Decimal(10, 4)
+  costInr         Decimal?           @db.Decimal(10, 4)
+  attempt         Int                @default(1)
+  startedAt       DateTime?
+  endedAt         DateTime?
+  createdAt       DateTime           @default(now())
+  completedAt     DateTime?
+
+  @@index([tenantId, status])
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@index([tenantId, customerId])
+  @@index([tenantId, invoiceId, createdAt(sort: Desc)])
+  @@index([tenantId, outcome, createdAt(sort: Desc)])
+  @@index([tenantId, campaignId, status])
+  @@map("voice_calls")
+}
+
+model VoiceCampaign {
+  id          String    @id @default(uuid())
+  tenantId    String
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  filter      Json      @default("{}")
+  status      String    @default("DRAFT")
+  scheduledAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  calls VoiceCall[]
+
+  @@index([tenantId, status, createdAt(sort: Desc)])
+  @@map("voice_campaigns")
+}
+
+model ContactConsent {
+  id         String    @id @default(uuid())
+  tenantId   String
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customerId String
+  customer   Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  phone      String
+  source     String
+  grantedAt  DateTime  @default(now())
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([tenantId, customerId, createdAt(sort: Desc)])
+  @@index([tenantId, phone, revokedAt])
+  @@map("voice_contact_consents")
+}
+
+model DoNotCall {
+  id        String   @id @default(uuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  phone     String
+  reason    String?
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, phone])
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@map("voice_do_not_call")
+}
+
+model VoiceWebhookNonce {
+  id            String           @id @default(uuid())
+  agentConfigId String
+  agentConfig   VoiceAgentConfig @relation(fields: [agentConfigId], references: [id], onDelete: Cascade)
+  nonceHash     String           @unique
+  createdAt     DateTime         @default(now())
+  expiresAt     DateTime
+
+  @@index([agentConfigId, createdAt(sort: Desc)])
+  @@index([expiresAt])
+  @@map("voice_webhook_nonces")
+}
+
+model VoiceWebhookRateBucket {
+  agentConfigId String           @map("agentConfigId")
+  agentConfig   VoiceAgentConfig @relation(fields: [agentConfigId], references: [id], onDelete: Cascade)
+  bucketStart   DateTime
+  requestCount  Int              @default(0)
+
+  @@id([agentConfigId, bucketStart])
+  @@index([bucketStart])
+  @@map("voice_webhook_rate_buckets")
+}
+
+// -------------------------------------------------------------
+// Visual Automation Rules Engine
+// -------------------------------------------------------------
+
+model AutomationWorkflow {
+  id             String            @id @default(uuid())
+  tenantId       String
+  tenant         Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name           String
+  description    String?
+  triggerType    AutomationTrigger
+  conditions     Json              @default("[]") // filter rules: [{ field: "total", operator: ">", value: 1000 }]
+  actions        Json              @default("[]") // action steps: [{ type: "GENERATE_INVOICE" }, { type: "SEND_WHATSAPP" }]
+  isActive       Boolean           @default(true)
+  executionCount Int               @default(0)
+  lastExecutedAt DateTime?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  runs AutomationRun[]
+
+  @@index([tenantId, triggerType, isActive])
+  @@map("automation_workflows")
+}
+
+model AutomationRun {
+  id             String             @id @default(uuid())
+  tenantId       String
+  tenant         Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  workflowId     String
+  workflow       AutomationWorkflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  triggerPayload Json
+  stepsExecuted  Json
+  status         String             @default("SUCCESS") // SUCCESS, FAILED, PARTIAL
+  executionLogs  String?            @db.Text
+  createdAt      DateTime           @default(now())
+
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@index([workflowId, createdAt(sort: Desc)])
+  @@map("automation_runs")
+}
+
+// -------------------------------------------------------------
+// Reports, Metering & Audits
+// -------------------------------------------------------------
+
+model UsageRecord {
+  id         String   @id @default(uuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  metric     String // INVOICES, WHATSAPP_MESSAGES, EMAILS, VOICE_MINUTES, AUTOMATIONS
+  quantity   Int      @default(1)
+  year       Int
+  month      Int
+  recordedAt DateTime @default(now())
+
+  @@index([tenantId, metric, year, month])
+  @@map("usage_records")
+}
+
+model ReportJob {
+  id              String       @id @default(uuid())
+  tenantId        String
+  tenant          Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  reportType      ReportType
+  parameters      Json         @default("{}")
+  format          ReportFormat @default(CSV)
+  status          ReportStatus @default(PENDING)
+  fileUrl         String?
+  fileSizeBytes   Int?
+  errorMessage    String?
+  createdByUserId String?
+  createdByUser   User?        @relation("RequestedByUser", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  expiresAt       DateTime?
+  createdAt       DateTime     @default(now())
+  completedAt     DateTime?
+
+  @@index([tenantId, reportType, status])
+  @@map("report_jobs")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action     String // e.g. "INVOICE_GENERATED", "WEBSITE_CONNECTED", "REPORT_EXPORTED"
+  entityType String // "invoice", "order", "report", "subscription"
+  entityId   String?
+  details    Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([tenantId, action, createdAt(sort: Desc)])
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@map("audit_logs")
+}

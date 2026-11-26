@@ -1,0 +1,210 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+@import './offline-pos/offline-pos.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* ========================================================
+       ONEBILL — VIBRANT, DESIGN-RICH ENTERPRISE SYSTEM
+       ======================================================== */
+
+    /* Primary Electric Brand Blue */
+    --color-primary: #0066FF;
+    --color-primary-hover: #0052CC;
+    --color-primary-active: #0040A8;
+    --color-primary-soft: #EEF6FF;
+    --color-primary-border: #BAE0FF;
+
+    /* Brighter Secondary Colors */
+    --color-secondary-bright: #0088FF;
+    --color-secondary-bright-hover: #0070E0;
+    --color-secondary-soft: #E6F4FF;
+    --color-secondary-border: #91CAFF;
+    --color-secondary-accent: #0284C7;
+
+    /* High-Contrast Crisp Typography */
+    --color-text-primary: #0F172A;   /* Deep Slate/Black 100% Contrast */
+    --color-text-secondary: #334155; /* Slate 700 - Highly Visible */
+    --color-text-muted: #475569;     /* Slate 600 - Clearly Legible */
+    --color-text-light: #64748B;     /* Slate 500 - Metadata */
+
+    /* Surfaces & Layout Backgrounds */
+    --color-bg-app: #F8FAFC;         /* Crisp Canvas */
+    --color-bg-surface: #FFFFFF;     /* Solid Pure White */
+    --color-bg-hover: #F0F7FF;       /* Soft Blue Tint Row Hover */
+    --color-border: #E2E8F0;         /* Card & Table Boundaries */
+    --color-border-input: #CBD5E1;   /* Input Field Outline */
+    --color-border-hover: #0066FF;   /* Focused / Hover Border */
+
+    /* Status Palette */
+    --color-success: #059669;
+    --color-success-bg: #ECFDF5;
+    --color-success-border: #A7F3D0;
+    --color-warning: #B45309;
+    --color-warning-bg: #FFFBEB;
+    --color-warning-border: #FDE68A;
+    --color-danger: #DC2626;
+    --color-danger-bg: #FEF2F2;
+    --color-danger-border: #FECACA;
+
+    /* Typography */
+    --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+
+    /* Standard Radix / Tailwind HSL Mappings */
+    --background: 210 40% 98%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --primary: 217 100% 50%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 212 100% 95%;
+    --secondary-foreground: 217 100% 50%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 214 100% 97%;
+    --accent-foreground: 217 100% 50%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 214 32% 91%;
+    --input: 214 32% 85%;
+    --ring: 217 100% 50%;
+    --radius: 6px;
+  }
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--color-bg-app);
+  color: var(--color-text-primary);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@media (min-width: 1024px) {
+  body {
+    font-size: 15px;
+  }
+}
+
+/* ========================================================
+   ANIMATIONS & DESIGN-RICH CARD INTERACTION STYLES
+   ======================================================== */
+
+@keyframes popIn {
+  0% {
+    opacity: 0;
+    transform: translateY(6px) scale(0.99);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.animate-pop-in {
+  animation: popIn 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes pulseDot {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(1.15);
+  }
+}
+
+.animate-pulse-dot {
+  animation: pulseDot 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Modern Card with Visual Accents & Layered Depth */
+.card-modern {
+  background-color: #FFFFFF;
+  border: 1px solid #E2E8F0;
+  border-radius: 6px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04), 0 1px 2px rgba(15, 23, 42, 0.02);
+  transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1),
+              border-color 0.18s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+.card-modern:hover {
+  transform: translateY(-3px);
+  border-color: #0066FF;
+  box-shadow: 0 8px 24px -4px rgba(0, 102, 255, 0.12),
+              0 2px 8px -2px rgba(15, 23, 42, 0.04);
+}
+
+/* Top Accent Bar on Cards */
+.card-accent-top {
+  position: relative;
+}
+.card-accent-top::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background-color: #0066FF;
+  border-top-left-radius: 6px;
+  border-top-right-radius: 6px;
+}
+
+.card-accent-emerald::before {
+  background-color: #059669;
+}
+
+.card-accent-cyan::before {
+  background-color: #0284C7;
+}
+
+/* Note Callout Strip within Cards */
+.card-note-strip {
+  background-color: #F8FAFC;
+  border-top: 1px solid #E2E8F0;
+  padding: 8px 16px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #334155;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Snappy Button Pop */
+.sharp-btn-pop {
+  transition: transform 0.1s ease-out, background-color 0.15s ease-out, box-shadow 0.15s ease-out;
+}
+.sharp-btn-pop:hover {
+  box-shadow: 0 2px 10px rgba(0, 102, 255, 0.25);
+}
+.sharp-btn-pop:active {
+  transform: scale(0.97);
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #F8FAFC;
+}
+::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94A3B8;
+}

@@ -1,0 +1,17 @@
+{
+  "name": "ollaiBooks Universal Offline POS",
+  "short_name": "ollaiBooks POS",
+  "description": "Enterprise Offline POS Billing, Inventory & Sales Management for Retail, Electronics, Apparel, Marts & Services.",
+  "start_url": "/offline-pos",
+  "scope": "/offline-pos",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0f172a",
+  "theme_color": "#2563eb",
+  "categories": ["business", "finance", "productivity", "utilities"],
+  "icons": [
+    { "src": "/billpilot-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/billpilot-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/billpilot-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

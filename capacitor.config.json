@@ -1,0 +1,18 @@
+{
+  "appId": "com.ollaibooks.pos",
+  "appName": "ollaiBooks Universal POS",
+  "webDir": "apps/web/public",
+  "bundledWebRuntime": false,
+  "server": {
+    "url": "http://localhost:3000/offline-pos",
+    "cleartext": true
+  },
+  "android": {
+    "allowMixedContent": true,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": true
+  },
+  "ios": {
+    "contentInset": "always"
+  }
+}

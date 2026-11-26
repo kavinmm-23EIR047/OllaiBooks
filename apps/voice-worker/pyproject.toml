@@ -1,0 +1,18 @@
+[project]
+name = "billpilot-voice-worker"
+version = "0.1.0"
+description = "LiveKit voice agent worker for ollaiBooks AI"
+requires-python = ">=3.11"
+dependencies = [
+  "livekit-agents[sarvam,openai]~=1.8",
+  "livekit-api>=1.0.0",
+  "aiohttp>=3.9,<4",
+  "python-dotenv>=1.0,<2",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]

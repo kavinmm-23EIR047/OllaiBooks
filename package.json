@@ -1,0 +1,30 @@
+{
+  "name": "billpilot-ai",
+  "version": "1.0.0",
+  "private": true,
+  "description": "ollaiBooks AI - Production-Ready Multi-Tenant SaaS Billing, Order Management & AI Automation Platform",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:api\" \"npm run dev:web\"",
+    "dev:api": "npm --prefix apps/api run start:dev",
+    "dev:web": "npm --prefix apps/web run dev",
+    "build": "npm --prefix apps/api run build && npm --prefix apps/web run build",
+    "build:apk": "node scripts/build-native-app.js --target=apk",
+    "build:desktop": "node scripts/build-native-app.js --target=desktop",
+    "export:pos": "node scripts/build-native-app.js --target=standalone",
+    "dev:desktop": "npm --prefix apps/desktop run start",
+    "db:migrate": "npm --prefix apps/api run prisma:migrate",
+    "db:generate": "npm --prefix apps/api run prisma:generate",
+    "db:seed": "npm --prefix apps/api run prisma:seed",
+    "db:studio": "npm --prefix apps/api run prisma:studio",
+    "test": "npm --prefix apps/api run test && npm --prefix apps/web run test",
+    "lint": "npm --prefix apps/api run lint && npm --prefix apps/web run lint"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "typescript": "^5.4.5"
+  }
+}

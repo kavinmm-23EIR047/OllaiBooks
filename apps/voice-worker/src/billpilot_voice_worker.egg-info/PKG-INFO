@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: billpilot-voice-worker
+Version: 0.1.0
+Summary: LiveKit voice agent worker for ollaiBooks AI
+Requires-Python: >=3.11
+Requires-Dist: livekit-agents[openai,sarvam]~=1.8
+Requires-Dist: livekit-api>=1.0.0
+Requires-Dist: aiohttp<4,>=3.9
+Requires-Dist: python-dotenv<2,>=1.0
