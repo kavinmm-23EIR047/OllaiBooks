@@ -31,10 +31,10 @@ This guide details how to package and convert the **ollaiBooks Universal Offline
 ## 2. 🪟 Windows Desktop App (.EXE / .MSI)
 
 ### Option A: Native Electron Desktop App
-1. Go to the desktop app directory:
+1. From the project root, install the workspace dependencies, then go to the desktop app directory:
    ```bash
-   cd apps/desktop
    npm install
+   cd apps/desktop
    ```
 2. **Launch in Kiosk Counter Mode**:
    ```bash
@@ -45,6 +45,10 @@ This guide details how to package and convert the **ollaiBooks Universal Offline
    npm run build:win
    ```
    Outputs `ollaiBooks Universal POS-Setup.exe` in `apps/desktop/dist/`.
+
+The installer bundles the POS web app and starts its local server automatically, so opening the desktop app does not require internet access. Offline billing still requires a prior online sign-in on that desktop app; the app then uses its locally stored products and bills while offline.
+
+To enable online sign-in and later sync in the desktop app, set `POS_API_URL` to the deployed API base URL before building (for example, `https://api.example.com/api/v1`). The packaged POS opens offline either way; the API is used for sign-in and syncing when reachable.
 
 ### Option B: 1-Click Edge / Chrome Desktop PWA
 1. Open `http://localhost:3000/offline-pos` in Microsoft Edge or Google Chrome.

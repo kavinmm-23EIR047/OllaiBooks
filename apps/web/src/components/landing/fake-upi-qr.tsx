@@ -17,7 +17,7 @@ export function FakeUpiQr({
   amount = '28,450.00',
   invoiceNumber = 'INV-2026-0842',
   payeeName = 'Acme Corporation Pvt Ltd',
-  upiId = 'billpilot.acme@icici',
+  upiId = 'ollaibooks.acme@icici',
   size = 'md',
   className = '',
   onPaymentSuccess,

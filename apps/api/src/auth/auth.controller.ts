@@ -4,9 +4,10 @@ import { CurrentUser } from './current-user.decorator';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { z } from 'zod';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { PasswordSchema } from '../common/password.policy';
 
 const LoginSchema = z.object({ email: z.string().trim().email().max(254), password: z.string().min(1).max(200) }).strict();
-const RegisterSchema = z.object({ businessName: z.string().trim().min(2).max(160), email: z.string().trim().email().max(254), password: z.string().min(12).max(200), firstName: z.string().trim().min(1).max(80).optional(), lastName: z.string().trim().min(1).max(80).optional(), phone: z.string().trim().max(40).optional() }).strict();
+const RegisterSchema = z.object({ businessName: z.string().trim().min(2).max(160), email: z.string().trim().email().max(254), password: PasswordSchema, firstName: z.string().trim().min(1).max(80).optional(), lastName: z.string().trim().min(1).max(80).optional(), phone: z.string().trim().max(40).optional() }).strict();
 
 @Controller('api/v1/auth')
 export class AuthController {

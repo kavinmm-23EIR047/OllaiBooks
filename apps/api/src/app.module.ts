@@ -19,6 +19,7 @@ import { AiModule } from './modules/ai/ai.module';
 import { BusinessProfileModule } from './modules/business-profile/business-profile.module';
 import { HealthModule } from './modules/health/health.module';
 import { OfflinePosModule } from './modules/offline-pos/offline-pos.module';
+import { CrmModule } from './modules/crm/crm.module';
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { OfflinePosModule } from './modules/offline-pos/offline-pos.module';
     BusinessProfileModule,
     HealthModule,
     OfflinePosModule,
+    CrmModule,
   ],
 })
 export class AppModule {}

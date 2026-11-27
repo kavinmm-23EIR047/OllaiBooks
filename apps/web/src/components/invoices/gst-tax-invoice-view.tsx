@@ -69,7 +69,7 @@ export function GstTaxInvoiceView({
     upiId: businessProfile?.upiId || 'acme@hdfcbank',
   };
 
-  const supplierState = getGstStateDetails(supplier.state || supplier.gstin);
+  const supplierState = getGstStateDetails(supplier.state, supplier.gstin);
 
   // Recipient (Customer) Details
   const customer = {
@@ -84,7 +84,7 @@ export function GstTaxInvoiceView({
     pan: invoice.customer?.gstin ? invoice.customer.gstin.slice(2, 12) : 'N/A',
   };
 
-  const recipientState = getGstStateDetails(customer.state || customer.gstin);
+  const recipientState = getGstStateDetails(customer.state, customer.gstin);
   const isInterstate = supplierState.code !== recipientState.code;
 
   // Normalize items

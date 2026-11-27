@@ -213,6 +213,7 @@ model Tenant {
   orders                Order[]
   invoices              Invoice[]
   offlinePosSales       OfflinePosSale[]
+  crmRecords            CrmRecord[]
   payments              Payment[]
   creditNotes           CreditNote[]
   whatsappAccounts      WhatsAppAccount[]
@@ -274,6 +275,8 @@ model User {
   phone           String?
   avatarUrl       String?
   isPlatformAdmin Boolean  @default(false)
+  lastLoginAt     DateTime?
+  lastLoginMode   String?
   isActive        Boolean  @default(true)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
@@ -1022,4 +1025,43 @@ model AuditLog {
   @@index([tenantId, action, createdAt(sort: Desc)])
   @@index([tenantId, createdAt(sort: Desc)])
   @@map("audit_logs")
+}
+
+/// Offline-first CRM records (leads, deals, activities). Client generates the id;
+/// sync is last-write-wins on clientUpdatedAt. Soft deletes keep history.
+model CrmRecord {
+  id              String    @id @default(uuid())
+  tenantId        String
+  tenant          Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  clientId        String
+  kind            String
+  data            Json
+  deleted         Boolean   @default(false)
+  clientUpdatedAt DateTime
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([tenantId, clientId])
+  @@index([tenantId, kind, updatedAt(sort: Desc)])
+  @@index([tenantId, updatedAt])
+  @@map("crm_records")
+}
+
+/// Desktop / Android / web app releases managed from the admin console (version control + update prompts).
+model AppRelease {
+  id               String   @id @default(uuid())
+  platform         String
+  version          String
+  minSupported     String?
+  downloadUrl      String?
+  sizeMb           Float?
+  notes            String?
+  mandatory        Boolean  @default(false)
+  isPublished      Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([platform, version])
+  @@index([platform, isPublished, createdAt(sort: Desc)])
+  @@map("app_releases")
 }

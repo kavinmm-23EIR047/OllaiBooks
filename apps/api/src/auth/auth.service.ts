@@ -192,6 +192,9 @@ export class AuthService {
       sub: user.id,
     });
 
+    // Admin console shows who signed in online and when
+    await this.prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date(), lastLoginMode: 'online' } }).catch(() => undefined);
+
     return {
       user: {
         id: user.id,

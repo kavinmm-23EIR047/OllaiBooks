@@ -63,6 +63,11 @@ export async function loginOffline(emailInput: string, password: string) {
       sessionStorage.setItem(SESSION_FLAG, 'offline');
       sessionStorage.setItem('billdesk_pos_offline_expires_at', String(identity.expiresAt));
       sessionStorage.removeItem('billpilot_jwt_token');
+      sessionStorage.setItem('ollaibooks_account', JSON.stringify({
+        email: identity.user?.email || identity.email,
+        name: [identity.user?.firstName, identity.user?.lastName].filter(Boolean).join(' '),
+        mode: 'offline',
+      }));
       return identity;
     }
   }
@@ -92,4 +97,5 @@ export function clearPosSession() {
   sessionStorage.removeItem('billpilot_jwt_token');
   sessionStorage.removeItem('billpilot_workspaces');
   sessionStorage.removeItem('billpilot_active_tenant_id');
+  sessionStorage.removeItem('ollaibooks_account');
 }

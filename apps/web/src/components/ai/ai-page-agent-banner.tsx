@@ -335,7 +335,7 @@ export function AiPageAgentBanner({ module, onActionComplete, className = '' }: 
                     </div>
                     <div className="rounded-xl bg-slate-800/80 p-3 border border-slate-700/60">
                       <span className="text-slate-400 text-[11px]">Payment Status</span>
-                      <p className="font-semibold text-emerald-400 mt-0.5">PAID (Billdesk UPI)</p>
+                      <p className="font-semibold text-emerald-400 mt-0.5">PAID (ollaiBooks UPI)</p>
                     </div>
                   </div>
                   <div className="rounded-xl bg-slate-800/50 p-3.5 border border-slate-700/50">

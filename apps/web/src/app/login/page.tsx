@@ -4,8 +4,12 @@ import * as React from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AiSymbol } from '@/components/ui/ai-symbol';
-import { ArrowLeft, ShieldCheck, Sparkles, CheckCircle2 } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Eye, EyeOff } from 'lucide-react';
 import { loginOffline, rememberOfflineIdentity, setPosOnlineSession } from '@/lib/offline-auth';
+import { isNativeApp } from '@/lib/native-app';
+import { DownloadAppGate } from '@/components/native/download-app-gate';
+
+const PASSWORD_MIN = 8;
 
 type Workspace = { tenantId: string; tenantName: string; tenantSlug: string; subscriptionEndsAt?: string };
 
@@ -19,6 +23,24 @@ function LoginFormContent() {
   const [busy, setBusy] = React.useState(false);
   const [emailInput, setEmailInput] = React.useState('');
   const [passwordInput, setPasswordInput] = React.useState('');
+  const [showPassword, setShowPassword] = React.useState(false);
+  const [nativeApp, setNativeApp] = React.useState(false);
+  const [webOffline, setWebOffline] = React.useState(false);
+  const passwordChecks = [
+    { label: '8+ characters', ok: passwordInput.length >= PASSWORD_MIN },
+    { label: 'A letter', ok: /[A-Za-z]/.test(passwordInput) },
+    { label: 'A number', ok: /\d/.test(passwordInput) },
+  ];
+
+  React.useEffect(() => {
+    const native = isNativeApp();
+    setNativeApp(native);
+    const update = () => setWebOffline(!native && !navigator.onLine);
+    update();
+    window.addEventListener('online', update);
+    window.addEventListener('offline', update);
+    return () => { window.removeEventListener('online', update); window.removeEventListener('offline', update); };
+  }, []);
 
   React.useEffect(() => {
     if (searchParams.get('mode') === 'register') {
@@ -28,11 +50,21 @@ function LoginFormContent() {
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setBusy(true);
     setError('');
+    if (passwordInput.length < PASSWORD_MIN) {
+      setError('Password must be at least 8 characters.');
+      return;
+    }
+    if (mode === 'register' && !passwordChecks.every((c) => c.ok)) {
+      setError('Use at least 8 characters with a letter and a number.');
+      return;
+    }
+    setBusy(true);
     try {
       if (!navigator.onLine) {
         if (mode !== 'login') throw new Error('Create your account while connected to the internet.');
+        // Browser = online only. Offline sign-in is available inside the installed app.
+        if (!nativeApp) { setWebOffline(true); return; }
         await loginOffline(emailInput, passwordInput);
         router.replace('/offline-pos');
         return;
@@ -49,6 +81,7 @@ function LoginFormContent() {
         });
       } catch {
         if (mode !== 'login') throw new Error('Could not reach the billing API. Connect to the internet and try again.');
+        if (!nativeApp) throw new Error('Can’t reach ollaiBooks right now. Check your internet connection and try again.');
         await loginOffline(emailInput, passwordInput);
         router.replace('/offline-pos');
         return;
@@ -79,6 +112,7 @@ function LoginFormContent() {
       sessionStorage.setItem('billpilot_workspaces', JSON.stringify(workspaces));
       sessionStorage.setItem('billpilot_active_tenant_id', workspaces[0].tenantId);
       setPosOnlineSession();
+      sessionStorage.setItem('ollaibooks_account', JSON.stringify({ email: data.user?.email, name: [data.user?.firstName, data.user?.lastName].filter(Boolean).join(' '), mode: 'online' }));
       if (workspaces[0]?.tenantId) {
         await rememberOfflineIdentity({
           email: emailInput,
@@ -88,13 +122,16 @@ function LoginFormContent() {
         });
       }
       
-      router.replace(data.user?.isPlatformAdmin ? '/admin' : searchParams.get('next') === '/offline-pos' ? '/offline-pos' : '/dashboard');
+      // Installed app opens the billing counter; the browser opens the online CRM.
+      router.replace(nativeApp ? '/offline-pos' : '/dashboard');
     } catch (reason: any) {
       setError(reason.message || 'Could not reach the billing API.');
     } finally {
       setBusy(false);
     }
   }
+
+  if (webOffline) return <DownloadAppGate reason="offline-login" />;
 
   return (
     <section className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-8 shadow-xl dark:border-slate-800 dark:bg-slate-900">
@@ -165,25 +202,47 @@ function LoginFormContent() {
           />
         </label>
 
-        <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-          Password
-          <input
-            name="password"
-            type="password"
-            required
-            value={passwordInput}
-            onChange={(e) => setPasswordInput(e.target.value)}
-            minLength={mode === 'register' ? 12 : 1}
-            autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-            placeholder="••••••••••••"
-            className="mt-1 w-full rounded-lg border border-slate-300 bg-transparent px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-600 focus:outline-none dark:border-slate-700 dark:text-white"
-          />
-          {mode === 'register' && (
-            <span className="mt-1 block text-[11px] text-slate-500">
-              Use at least 12 characters. After your first online sign-in, this device can sign in offline for up to 7 days, subject to your subscription.
-            </span>
-          )}
-        </label>
+        <div className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+          <label htmlFor="ob-password">Password</label>
+          <div className="relative mt-1">
+            <input
+              id="ob-password"
+              name="password"
+              type={showPassword ? 'text' : 'password'}
+              required
+              value={passwordInput}
+              onChange={(e) => setPasswordInput(e.target.value)}
+              minLength={PASSWORD_MIN}
+              autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+              placeholder="At least 8 characters"
+              aria-describedby="ob-password-help"
+              className="w-full rounded-lg border border-slate-300 bg-transparent py-2 pl-3 pr-11 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-600 focus:outline-none dark:border-slate-700 dark:text-white"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              className="absolute inset-y-0 right-0 grid w-10 place-items-center rounded-r-lg text-slate-500 hover:text-blue-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
+              aria-pressed={showPassword}
+              title={showPassword ? 'Hide password' : 'Show password'}
+            >
+              {showPassword ? <EyeOff className="h-4.5 w-4.5" /> : <Eye className="h-4.5 w-4.5" />}
+            </button>
+          </div>
+          <div id="ob-password-help" className="mt-1.5">
+            {mode === 'register' || passwordInput.length > 0 ? (
+              <ul className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] font-medium">
+                {passwordChecks.map((c) => (
+                  <li key={c.label} className={`inline-flex items-center gap-1 ${c.ok ? 'text-emerald-600' : 'text-slate-400'}`}>
+                    <CheckCircle2 className="h-3 w-3" /> {c.label}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <span className="text-[11px] font-normal text-slate-500">Your password has at least 8 characters.</span>
+            )}
+          </div>
+        </div>
 
         {error && (
           <p role="alert" className="rounded-lg bg-rose-50 p-3 text-xs font-medium text-rose-700 border border-rose-200">

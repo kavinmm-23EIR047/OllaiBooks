@@ -66,6 +66,25 @@ const config: Config = {
           border: '#91CAFF',
           accent: '#0284C7',
         },
+        // ollaiBooks CRM — Silver Gray neutrals (paired with brand blue)
+        silver: {
+          50: "#F7F8FA",
+          100: "#EEF0F4",
+          200: "#E2E5EB",
+          300: "#CDD2DA",
+          400: "#A7AEBA",
+          500: "#808897",
+          600: "#626A78",
+          700: "#4A515D",
+          800: "#323842",
+          900: "#1D2129",
+        },
+        // ollaiBooks CRM — deep navy for chrome / headers
+        navy: {
+          700: "#163A78",
+          800: "#0F2D63",
+          900: "#0A214B",
+        },
         // High-Contrast Neutral Palette (Highly Visible on all Displays)
         slate: {
           50: '#F8FAFC',  // Canvas Background

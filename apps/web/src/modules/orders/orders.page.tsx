@@ -9,7 +9,8 @@ import { Zap, CheckCircle, ShieldCheck, Search, ChevronDown, ChevronLeft, Chevro
 import { ApiClient } from '@/lib/api-client';
 import { AiPageAgentBanner } from '@/components/ai/ai-page-agent-banner';
 import { AiSymbol } from '@/components/ui/ai-symbol';
-import { getOfflineCache, setOfflineCache } from '@/lib/offline-invoices';
+import { getOfflineCache, clearOfflineCache } from '@/lib/offline-invoices';
+import { loadOfflinePosData, saveEncryptedCache, loadEncryptedCache } from '@/lib/offline-pos-storage';
 import { printKitchenOrderTicket } from '@/lib/print-documents';
 import { buildOrderBook, filterOrderBook, type OrderBookTab } from '@/lib/order-book';
 
@@ -34,7 +35,12 @@ export function OrdersPage() {
   const pageOrders = filteredOrders.slice((Math.min(page, pageCount) - 1) * pageSize, Math.min(page, pageCount) * pageSize);
 
   React.useEffect(() => {
-    const refreshShopOrders = () => setShopOrders(getOfflineCache<any[]>('shop-orders', []));
+    // Shop/POS bills are read straight from the encrypted offline vault
+    const refreshShopOrders = () => {
+      loadOfflinePosData()
+        .then(({ data }) => setShopOrders(Array.isArray(data?.sales) ? data.sales : getOfflineCache<any[]>('shop-orders', [])))
+        .catch(() => setShopOrders(getOfflineCache<any[]>('shop-orders', [])));
+    };
     refreshShopOrders();
     window.addEventListener('storage', refreshShopOrders);
     window.addEventListener('focus', refreshShopOrders);
@@ -45,12 +51,13 @@ export function OrdersPage() {
     ApiClient.get<any>('/orders?limit=100')
       .then((data) => {
         setOrders(data.items || []);
-        setOfflineCache('orders', data.items || []);
+        void saveEncryptedCache('website-orders', { items: data.items || [], savedAt: new Date().toISOString() }).catch(() => undefined);
+        clearOfflineCache('orders');
         setIsOnline(true);
       })
-      .catch((reason) => {
-        const cached = getOfflineCache<any[]>('orders', []);
-        setOrders(cached);
+      .catch(async (reason) => {
+        const cached = await loadEncryptedCache<{ items: any[] } | null>('website-orders', null);
+        setOrders(cached?.items || getOfflineCache<any[]>('orders', []));
         if (!navigator.onLine || reason instanceof TypeError) setIsOnline(false);
         else setError(reason.message || 'Could not load orders.');
       });

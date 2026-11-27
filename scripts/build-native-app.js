@@ -51,7 +51,7 @@ switch (target) {
     const desktopDir = path.join(__dirname, '..', 'apps', 'desktop');
     console.log(`Setting up Electron Desktop in: ${desktopDir}\n`);
     console.log('To run Desktop App locally in Kiosk/Counter mode:');
-    console.log('  cd apps/desktop && npm install && npm start\n');
+    console.log('  cd apps/desktop && npm start\n');
     console.log('To compile standalone Windows .EXE installer:');
     console.log('  cd apps/desktop && npm run build:win\n');
     console.log('To compile macOS .DMG installer:');

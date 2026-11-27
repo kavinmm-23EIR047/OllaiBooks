@@ -53,3 +53,9 @@ export function saveOfflineInvoice(record: OfflineInvoiceRecord) {
 export function removeOfflineInvoice(id: string) {
   writeRecords(getOfflineInvoiceRecords().filter((record) => record.id !== id));
 }
+
+/** Remove a legacy plain-text cache entry (data now lives in the encrypted vault). */
+export function clearOfflineCache(name: string) {
+  if (typeof window === 'undefined') return;
+  try { localStorage.removeItem(scopedCacheKey(name)); } catch { /* ignore */ }
+}

@@ -8,6 +8,7 @@
 **/.next/
 **/dist/
 apps/desktop/dist/
+apps/desktop/pos-server/
 android/
 ios/
 

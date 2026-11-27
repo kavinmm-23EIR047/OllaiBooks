@@ -10,12 +10,24 @@ import {
   Building2, Upload, FileText, CheckCircle2, AlertCircle, RefreshCw,
   QrCode, CreditCard, Laptop, Shirt, Coffee, Tag, Boxes, Layers, Store,
   Smartphone, User, Clock, Receipt, ShieldCheck, Pencil, Calculator,
-  ExternalLink, Copy, Monitor, Share2
+  ExternalLink, Copy, Monitor, Share2, Lock, KeyRound
 } from 'lucide-react';
 import { ApiClient } from '@/lib/api-client';
 import { clearPosSession, getPosSessionMode } from '@/lib/offline-auth';
-import { loadOfflinePosData, requestPersistentStorage, saveOfflinePosData, type OfflineStorageMode, type StoragePersistence } from '@/lib/offline-pos-storage';
-import { getOfflineCache, setOfflineCache } from '@/lib/offline-invoices';
+import {
+  loadOfflinePosData,
+  requestPersistentStorage,
+  saveOfflinePosData,
+  isOfflineVaultEncrypted,
+  getOfflinePinHash,
+  setOfflineCounterPin,
+  verifyOfflineCounterPin,
+  saveEncryptedCache,
+  loadEncryptedCache,
+  type OfflineStorageMode,
+  type StoragePersistence,
+} from '@/lib/offline-pos-storage';
+import { getOfflineCache, setOfflineCache, clearOfflineCache } from '@/lib/offline-invoices';
 import { buildOrderBook, filterOrderBook, type OrderBookTab } from '@/lib/order-book';
 import {
   printKitchenOrderTicket,
@@ -24,6 +36,16 @@ import {
   type InvoiceTemplateId,
   type ThermalPaperWidth,
 } from '@/lib/print-documents';
+import { buildInvoiceHtml, buildSampleSale, type GstRegistrationType } from '@/lib/print-documents';
+import { INDIAN_GST_STATES, detectGstState, isInterstateGst } from '@/lib/gst-utils';
+import { appendAudit, verifyAuditChain, auditSeverity, AUDIT_LABELS, type AuditEntry, type AuditAction } from '@/lib/audit-trail';
+import { useToasts, ToastStack } from '@/components/ui/pos-toast';
+import { getDesktopBridge, isNativeApp, nativePlatformLabel, SUPPORT, type DesktopPaths } from '@/lib/native-app';
+import { DownloadAppGate } from '@/components/native/download-app-gate';
+import {
+  OfflineCounterIllustration, SyncCloudIllustration, EmptyCartIllustration,
+  AuditShieldIllustration, LogoUploadIllustration,
+} from '@/components/illustrations/pos-illustrations';
 
 export interface Product {
   id: string;
@@ -51,6 +73,7 @@ export interface LineItem {
   quantity: number;
   price: number;
   hsn?: string;
+  unit?: string;
 }
 
 export interface Sale {
@@ -71,7 +94,13 @@ export interface Sale {
   pickup: string;
   orderType?: string;
   tableNumber?: string;
+  placeOfSupply?: string;
+  isInterstate?: boolean;
+  customerGstin?: string;
+  customerAddress?: string;
   sync: 'pending' | 'synced';
+  syncedAt?: string;
+  filePath?: string;
 }
 
 interface PosReminder {
@@ -87,7 +116,46 @@ export interface Shop {
   address: string;
   gstin: string;
   businessType: string;
+  state?: string;
+  logo?: string;
+  email?: string;
+  upiId?: string;
+  bankDetails?: string;
+  terms?: string;
+  footerNote?: string;
+  fssai?: string;
+  gstRegistration?: GstRegistrationType;
+  brandColor?: string;
   [key: string]: unknown;
+}
+
+const GSTIN_PATTERN = /^\d{2}[A-Z]{5}\d{4}[A-Z][A-Z0-9]Z[A-Z0-9]$/;
+
+/** Resize an uploaded logo to max 320px and return a compact data URL, safe for offline storage and printing. */
+async function resizeLogo(file: File): Promise<string> {
+  if (!/^image\/(png|jpe?g|webp|svg\+xml)$/.test(file.type)) throw new Error('Please choose a PNG, JPG, WebP or SVG image.');
+  if (file.size > 4 * 1024 * 1024) throw new Error('Logo must be 4 MB or smaller.');
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error('Could not read the logo file.'));
+    reader.readAsDataURL(file);
+  });
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const el = new Image();
+    el.onload = () => resolve(el);
+    el.onerror = () => reject(new Error('That image could not be opened.'));
+    el.src = dataUrl;
+  });
+  const max = 320;
+  const scale = Math.min(1, max / Math.max(img.naturalWidth || max, img.naturalHeight || max));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round((img.naturalWidth || max) * scale));
+  canvas.height = Math.max(1, Math.round((img.naturalHeight || max) * scale));
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return dataUrl;
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL('image/png');
 }
 
 export interface WorkspaceItem {
@@ -181,15 +249,20 @@ function renderProductCardArt(p: Product) {
     return <ShoppingCart size={32} className="text-emerald-600" />;
   }
   if (cat.includes('services') || name.includes('consulting')) {
-    return <Building2 size={32} className="text-purple-600" />;
+    return <Building2 size={26} className="text-purple-600" />;
   }
   if (cat.includes('confectionery') || cat.includes('gourmet')) {
-    return <ShoppingBag size={32} className="text-purple-600" />;
+    return <ShoppingBag size={26} className="text-purple-600" />;
   }
-  if (p.emoji && p.emoji !== '📦' && p.emoji !== '🏷️' && !p.emoji.startsWith('🧁') && !p.emoji.startsWith('🍰') && !p.emoji.startsWith('🥐') && !p.emoji.startsWith('🍫')) {
-    return <span className="text-2xl">{p.emoji}</span>;
-  }
-  return <Package size={32} className="text-slate-600" />;
+  const iconKey = p.emoji || '';
+  if (iconKey === 'icon:laptop' || iconKey === '💻') return <Laptop size={26} className="text-blue-600" />;
+  if (iconKey === 'icon:phone' || iconKey === '📱') return <Smartphone size={26} className="text-indigo-600" />;
+  if (iconKey === 'icon:shirt' || iconKey === '👕') return <Shirt size={26} className="text-rose-600" />;
+  if (iconKey === 'icon:bag' || iconKey === '🛒') return <ShoppingBag size={26} className="text-emerald-600" />;
+  if (iconKey === 'icon:coffee' || iconKey === '☕') return <Coffee size={26} className="text-amber-600" />;
+  if (iconKey === 'icon:layers' || iconKey === '💼') return <Layers size={26} className="text-purple-600" />;
+  if (iconKey === 'icon:tag' || iconKey === '🏷️') return <Tag size={26} className="text-sky-600" />;
+  return <Package size={26} className="text-slate-600" />;
 }
 
 // Zero-dependency, standards-compliant CSV parser for Excel & Google Sheets
@@ -257,7 +330,16 @@ function parseCsv(text: string): Record<string, string>[] {
   return results;
 }
 
+/** Browser = online only. The offline counter runs only inside the installed desktop / Android app. */
 export default function OfflinePosPage() {
+  const [native, setNative] = React.useState<boolean | null>(null);
+  React.useEffect(() => { setNative(isNativeApp()); }, []);
+  if (native === null) return null;
+  if (!native) return <DownloadAppGate reason="offline-billing" />;
+  return <OfflinePosApp />;
+}
+
+function OfflinePosApp() {
   const router = useRouter();
 
   // Multi-tenant workspaces state
@@ -288,7 +370,7 @@ export default function OfflinePosPage() {
   const [cart, setCart] = React.useState<LineItem[]>([]);
   const [query, setQuery] = React.useState('');
   const [category, setCategory] = React.useState('All items');
-  const [tab, setTab] = React.useState<'dashboard' | 'billing' | 'sales' | 'products' | 'settings'>('dashboard');
+  const [tab, setTab] = React.useState<'dashboard' | 'billing' | 'sales' | 'products' | 'settings' | 'help'>('dashboard');
 
   // Fast Checkout form fields
   const [customer, setCustomer] = React.useState('');
@@ -297,6 +379,10 @@ export default function OfflinePosPage() {
   const [pickup, setPickup] = React.useState('');
   const [orderType, setOrderType] = React.useState('Counter sale');
   const [tableNumber, setTableNumber] = React.useState('');
+  const [customerState, setCustomerState] = React.useState('');
+  const [customerGstin, setCustomerGstin] = React.useState('');
+  const [customerAddress, setCustomerAddress] = React.useState('');
+  const [showExtraBillFields, setShowExtraBillFields] = React.useState(false);
   const [method, setMethod] = React.useState('UPI');
   const [discount, setDiscount] = React.useState(0);
   const [taxEnabled, setTaxEnabled] = React.useState(true);
@@ -308,7 +394,10 @@ export default function OfflinePosPage() {
   const [ready, setReady] = React.useState(false);
   const [loadedTenantId, setLoadedTenantId] = React.useState<string | null>(null);
   const [authReady, setAuthReady] = React.useState(false);
-  const [toast, setToast] = React.useState('');
+  const { toasts, notify, dismiss: dismissToast, legacyToast: setToast } = useToasts();
+  const [auditLog, setAuditLog] = React.useState<AuditEntry[]>([]);
+  const [auditFilter, setAuditFilter] = React.useState<'all' | 'sale' | 'sync' | 'stock' | 'settings'>('all');
+  const [showTemplatePreview, setShowTemplatePreview] = React.useState(false);
   const [mobileMenu, setMobileMenu] = React.useState(false);
   const [mobileCartOpen, setMobileCartOpen] = React.useState(false);
   const [storageMode, setStorageMode] = React.useState<OfflineStorageMode>('indexeddb');
@@ -324,7 +413,11 @@ export default function OfflinePosPage() {
   const tenantLoadGeneration = React.useRef(0);
   const [savingSale, setSavingSale] = React.useState(false);
   const [syncingSales, setSyncingSales] = React.useState(false);
-  const [syncMessage, setSyncMessage] = React.useState('Sales sync automatically when you are online.');
+  const [syncMessage, setSyncMessage] = React.useState('Bills sync to the cloud on their own whenever you’re online.');
+  const [lastSyncedAt, setLastSyncedAt] = React.useState<string | null>(null);
+  const [lastBackupAt, setLastBackupAt] = React.useState<string | null>(null);
+  const [desktopPaths, setDesktopPaths] = React.useState<DesktopPaths | null>(null);
+  const [account, setAccount] = React.useState<{ email?: string; name?: string; mode?: string } | null>(null);
   const [syncAttempt, setSyncAttempt] = React.useState(0);
 
   // Modals state
@@ -334,6 +427,29 @@ export default function OfflinePosPage() {
   const [invoiceTemplate, setInvoiceTemplate] = React.useState<InvoiceTemplateId>('thermal');
   const [paperWidth, setPaperWidth] = React.useState<ThermalPaperWidth>('80mm');
   const [autoPrintOnComplete, setAutoPrintOnComplete] = React.useState<'none' | 'bill' | 'kot-and-bill'>('none');
+  const [vaultEncrypted, setVaultEncrypted] = React.useState(false);
+  const [hasCounterPin, setHasCounterPin] = React.useState(false);
+  const [counterLocked, setCounterLocked] = React.useState(false);
+  const [pinInput, setPinInput] = React.useState('');
+  const [pinError, setPinError] = React.useState('');
+  const [newPinInput, setNewPinInput] = React.useState('');
+
+  React.useEffect(() => {
+    setVaultEncrypted(isOfflineVaultEncrypted());
+    setHasCounterPin(Boolean(getOfflinePinHash(activeTenantId)));
+  }, [activeTenantId]);
+
+  const recentCustomers = React.useMemo(() => {
+    const map = new Map<string, { name: string; phone: string; state: string }>();
+    sales.forEach(s => {
+      const name = s.customer?.trim();
+      if (!name || name === 'Walk-in customer') return;
+      if (!map.has(name.toLowerCase())) {
+        map.set(name.toLowerCase(), { name, phone: s.phone || '', state: s.placeOfSupply || '' });
+      }
+    });
+    return Array.from(map.values()).slice(0, 50);
+  }, [sales]);
 
   React.useEffect(() => {
     try {
@@ -361,7 +477,7 @@ export default function OfflinePosPage() {
   const [newProdStock, setNewProdStock] = React.useState<number | ''>(50);
   const [newProdTracksStock, setNewProdTracksStock] = React.useState(true);
   const [newProdHsn, setNewProdHsn] = React.useState('');
-  const [newProdEmoji, setNewProdEmoji] = React.useState('🏷️');
+  const [newProdEmoji, setNewProdEmoji] = React.useState('icon:package');
   const [newProdUnit, setNewProdUnit] = React.useState('pcs');
   const [newProdPurchaseDate, setNewProdPurchaseDate] = React.useState(new Date().toISOString().slice(0, 10));
   const [newProdPurchasePrice, setNewProdPurchasePrice] = React.useState<number | ''>('');
@@ -494,6 +610,9 @@ export default function OfflinePosPage() {
 
       if (typeof data?.taxEnabled === 'boolean') setTaxEnabled(data.taxEnabled);
       if (typeof data?.taxRate === 'number') setTaxRate(data.taxRate);
+      setAuditLog(Array.isArray(data?.auditLog) ? data.auditLog as AuditEntry[] : []);
+      setLastSyncedAt(typeof data?.lastSyncedAt === 'string' ? data.lastSyncedAt : null);
+      setLastBackupAt(typeof data?.lastBackupAt === 'string' ? data.lastBackupAt : null);
 
       setStorageMode(mode);
       setLoadedTenantId(tenantId);
@@ -502,9 +621,14 @@ export default function OfflinePosPage() {
       if (generation !== tenantLoadGeneration.current) return;
       setStorageMode('localStorage');
       setReady(false);
-      setToast('Running in local storage fallback mode.');
+      notify('warning', 'Using backup storage', 'This browser blocked the secure database, so bills are kept in simpler local storage. Export a backup regularly.');
     }
-  }, [workspaces]);
+  }, [workspaces, notify]);
+
+  const auditActor = posSessionMode === 'offline' ? 'Counter · offline login' : 'Counter · online login';
+  const recordAudit = React.useCallback((action: AuditAction, summary: string, extra?: { ref?: string; amount?: number }) => {
+    setAuditLog(log => appendAudit(log, { action, summary, actor: auditActor, ...extra }));
+  }, [auditActor]);
 
   React.useEffect(() => {
     if (activeTenantId) {
@@ -515,22 +639,80 @@ export default function OfflinePosPage() {
   // 3. Auto-save State to IndexedDB on Changes
   React.useEffect(() => {
     if (!ready || !activeTenantId || loadedTenantId !== activeTenantId) return;
-    saveOfflinePosData({ products, sales, shop, taxEnabled, taxRate }, activeTenantId)
+    saveOfflinePosData({ products, sales, shop, taxEnabled, taxRate, auditLog, lastSyncedAt, lastBackupAt }, activeTenantId)
       .then(mode => setStorageMode(mode))
-      .catch(error => setToast(error instanceof Error ? error.message : 'Storage quota exceeded.'));
-    setOfflineCache('shop-orders', sales);
-  }, [products, sales, shop, taxEnabled, taxRate, ready, loadedTenantId, activeTenantId]);
+      .catch(error => notify('error', 'Device storage is full', error instanceof Error ? error.message : 'Free up space or export a backup so no bill is lost.'));
+  }, [products, sales, shop, taxEnabled, taxRate, auditLog, lastSyncedAt, lastBackupAt, ready, loadedTenantId, activeTenantId, notify]);
 
+  // Record settings edits in the audit trail (debounced so typing doesn't flood the log)
+  const settingsSnapshot = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (!ready || loadedTenantId !== activeTenantId) { settingsSnapshot.current = null; return; }
+    const { logo: _logo, ...rest } = shop;
+    const snapshot = JSON.stringify({ rest, taxEnabled, taxRate });
+    if (settingsSnapshot.current === null) { settingsSnapshot.current = snapshot; return; }
+    if (settingsSnapshot.current === snapshot) return;
+    const timer = window.setTimeout(() => {
+      settingsSnapshot.current = snapshot;
+      recordAudit('settings.updated', `Store / tax settings updated (GST ${taxEnabled ? `${taxRate}%` : 'off'})`);
+    }, 2500);
+    return () => window.clearTimeout(timer);
+  }, [shop, taxEnabled, taxRate, ready, loadedTenantId, activeTenantId, recordAudit]);
+
+  // Older versions mirrored bills in plain-text localStorage; the encrypted vault is now the only copy.
+  React.useEffect(() => { clearOfflineCache('shop-orders'); }, [activeTenantId]);
+
+  // Friendly network status toasts + audit entries when the connection changes
+  const previousOnline = React.useRef<boolean | null>(null);
+  React.useEffect(() => {
+    if (!ready) return;
+    if (previousOnline.current === null) {
+      previousOnline.current = online;
+      return;
+    }
+    if (previousOnline.current === online) return;
+    previousOnline.current = online;
+    if (online) {
+      notify('success', 'You’re back online', 'Waiting bills will now sync to your cloud workspace on their own.');
+      recordAudit('network.online', 'Internet connection restored');
+    } else {
+      notify('offline', 'You’re offline — keep billing', 'Nothing stops. Every bill is saved and encrypted on this device and syncs once you’re back online.');
+      recordAudit('network.offline', 'Internet connection lost; counter continues offline');
+    }
+  }, [online, ready, notify, recordAudit]);
+
+  /**
+   * Website orders: when online we download the latest 100 orders from the API
+   * and keep an AES-encrypted copy on this device, so the order book (and KOT
+   * printing) still works offline. Offline, we show that last saved copy.
+   */
+  const [websiteOrdersSavedAt, setWebsiteOrdersSavedAt] = React.useState<string | null>(null);
   const refreshWebsiteOrders = React.useCallback(async () => {
+    const tenantId = activeTenantId;
     try {
       const data = await ApiClient.get<any>('/orders?limit=100');
       const items = Array.isArray(data?.items) ? data.items : [];
+      const savedAt = new Date().toISOString();
       setWebsiteOrders(items);
-      setOfflineCache('orders', items);
+      setWebsiteOrdersSavedAt(savedAt);
+      await saveEncryptedCache('website-orders', { items, savedAt }, tenantId);
+      clearOfflineCache('orders');
     } catch {
-      setWebsiteOrders(getOfflineCache<any[]>('orders', []));
+      const cached = await loadEncryptedCache<{ items: any[]; savedAt: string } | null>('website-orders', null, tenantId);
+      if (cached) {
+        setWebsiteOrders(cached.items || []);
+        setWebsiteOrdersSavedAt(cached.savedAt || null);
+      } else {
+        // One-time migration from the old plain-text cache
+        const legacy = getOfflineCache<any[]>('orders', []);
+        setWebsiteOrders(legacy);
+        if (legacy.length) {
+          await saveEncryptedCache('website-orders', { items: legacy, savedAt: new Date().toISOString() }, tenantId).catch(() => undefined);
+          clearOfflineCache('orders');
+        }
+      }
     }
-  }, []);
+  }, [activeTenantId]);
 
   React.useEffect(() => {
     if (ready && loadedTenantId === activeTenantId) void refreshWebsiteOrders();
@@ -550,13 +732,6 @@ export default function OfflinePosPage() {
     return () => window.removeEventListener('online', refreshOnReconnect);
   }, [refreshWebsiteOrders]);
 
-  // Toast timer auto-dismiss
-  React.useEffect(() => {
-    if (!toast) return;
-    const timer = window.setTimeout(() => setToast(''), 3500);
-    return () => window.clearTimeout(timer);
-  }, [toast]);
-
   // Switch Active Workspace
   const handleSwitchWorkspace = (targetTenantId: string) => {
     setWorkspaceMenuOpen(false);
@@ -567,7 +742,7 @@ export default function OfflinePosPage() {
     const targetWp = workspaces.find(w => w.tenantId === targetTenantId);
     setCart([]);
     setReady(false);
-    setToast(`Switched workspace to: ${targetWp?.tenantName || 'New Store'}`);
+    notify('info', `Switched to ${targetWp?.tenantName || 'new store'}`, 'Each store keeps its own bills, stock and settings on this device.');
   };
 
   // Dynamic Categories from Products
@@ -617,7 +792,27 @@ export default function OfflinePosPage() {
     }
   };
 
-  // Mathematical Totals
+  // Mathematical Totals & Offline GST State Detection
+  const resolvedShopState = React.useMemo(
+    () => (shop.state ? detectGstState(shop.state) : null) || detectGstState(shop.gstin) || detectGstState(shop.address),
+    [shop],
+  );
+  const customerGstinClean = customerGstin.trim().toUpperCase();
+  const customerGstinValid = !customerGstinClean || GSTIN_PATTERN.test(customerGstinClean);
+  const resolvedCustomerState = React.useMemo(
+    () => (customerState
+      ? detectGstState(customerState)
+      : (customerGstinClean && GSTIN_PATTERN.test(customerGstinClean) ? detectGstState(customerGstinClean) : resolvedShopState)),
+    [customerState, customerGstinClean, resolvedShopState],
+  );
+  const isInterstateSale = React.useMemo(
+    () => isInterstateGst(
+      shop.state || shop.gstin || shop.address,
+      customerState || (GSTIN_PATTERN.test(customerGstinClean) ? customerGstinClean : undefined),
+      shop.gstin,
+    ),
+    [shop, customerState, customerGstinClean],
+  );
   const subtotal = roundMoney(cart.reduce((sum, item) => sum + item.price * item.quantity, 0));
   const discountAmount = Math.min(subtotal, roundMoney(Math.max(0, discount)));
   const taxable = roundMoney(subtotal - discountAmount);
@@ -644,7 +839,7 @@ export default function OfflinePosPage() {
   }, [todaySales]);
   const pendingCount = sales.filter(s => s.sync === 'pending').length;
   const pendingSales = React.useMemo(() => sales.filter(sale => sale.sync === 'pending'), [sales]);
-  const syncPendingSales = React.useCallback(async () => {
+  const syncPendingSales = React.useCallback(async (manual = false) => {
     if (syncingSales || !online || !authReady || !ready || loadedTenantId !== activeTenantId || posSessionMode !== 'online' || !pendingSales.length) return;
     const tenantId = activeTenantId;
     setSyncingSales(true);
@@ -655,17 +850,59 @@ export default function OfflinePosPage() {
       if (sessionStorage.getItem('billpilot_active_tenant_id') !== tenantId) return;
       const syncedIds = new Set(result.syncedIds || []);
       if (syncedIds.size) {
-        setSales(current => current.map(sale => syncedIds.has(sale.id) ? { ...sale, sync: 'synced' } : sale));
-        setSyncMessage(`${syncedIds.size} sale${syncedIds.size === 1 ? '' : 's'} saved to your online workspace.`);
+        const at = new Date().toISOString();
+        setSales(current => current.map(sale => syncedIds.has(sale.id) ? { ...sale, sync: 'synced', syncedAt: at } : sale));
+        setLastSyncedAt(at);
+        setSyncMessage(`${syncedIds.size} bill${syncedIds.size === 1 ? '' : 's'} safely copied to your cloud workspace.`);
+        recordAudit('sync.success', `${syncedIds.size} bill${syncedIds.size === 1 ? '' : 's'} synced to cloud`);
+        if (manual) notify('success', 'All caught up', `${syncedIds.size} bill${syncedIds.size === 1 ? ' is' : 's are'} now in your cloud workspace.`);
+      } else if (manual) {
+        notify('warning', 'Nothing was accepted', 'The server didn’t confirm any bills. They stay safe here and we’ll retry.');
       }
       setSyncAttempt(0);
     } catch {
-      setSyncMessage('Online sync failed. Your local bills are still saved; retry when connected.');
+      setSyncMessage('Couldn’t reach the cloud just now. Your bills are safe on this device — we’ll retry shortly.');
+      if (manual || syncAttempt === 0) recordAudit('sync.failed', `Sync attempt failed for ${pendingSales.length} bill(s)`);
+      if (manual) notify('error', 'Sync didn’t go through', 'Your bills are still saved on this device. We’ll keep retrying automatically.');
       setSyncAttempt(current => current + 1);
     } finally {
       setSyncingSales(false);
     }
-  }, [syncingSales, online, authReady, ready, loadedTenantId, activeTenantId, posSessionMode, pendingSales]);
+  }, [syncingSales, online, authReady, ready, loadedTenantId, activeTenantId, posSessionMode, pendingSales, syncAttempt, recordAudit, notify]);
+
+  /** User clicked "Sync" — always explain what happens, especially when offline. */
+  const requestSync = () => {
+    if (!online) {
+      notify(
+        'offline',
+        'You’re offline right now',
+        pendingCount
+          ? `${pendingCount} bill${pendingCount === 1 ? ' is' : 's are'} safely saved and encrypted on this device. We’ll sync ${pendingCount === 1 ? 'it' : 'them'} automatically as soon as the internet is back.`
+          : 'All your bills are already synced. New bills will be saved here and synced when you reconnect.',
+        { duration: 7000 },
+      );
+      recordAudit('sync.blocked_offline', `Sync requested while offline (${pendingCount} waiting)`);
+      return;
+    }
+    if (posSessionMode === 'offline') {
+      notify('warning', 'Signed in with offline login', 'To send bills to the cloud, sign in once with internet. Your bills stay safe here till then.', {
+        duration: 7000,
+        action: { label: 'Sign in online', onClick: () => { clearPosSession(); router.replace('/login?next=%2Foffline-pos'); } },
+      });
+      recordAudit('sync.blocked_offline', 'Sync requested in offline-login session');
+      return;
+    }
+    if (!pendingCount) {
+      notify('success', 'Everything is synced', lastSyncedAt ? `Last synced ${new Date(lastSyncedAt).toLocaleString('en-IN')}.` : 'There are no bills waiting to sync.');
+      return;
+    }
+    if (syncingSales) {
+      notify('sync', 'Sync already running', 'Hang on — we’re sending your bills right now.');
+      return;
+    }
+    notify('sync', `Syncing ${pendingCount} bill${pendingCount === 1 ? '' : 's'}…`, 'You can keep billing while this runs.', { duration: 2500 });
+    void syncPendingSales(true);
+  };
 
   React.useEffect(() => {
     if (!online || !authReady || !ready || loadedTenantId !== activeTenantId || posSessionMode !== 'online' || pendingCount === 0) return;
@@ -766,7 +1003,7 @@ export default function OfflinePosPage() {
         }
         return prev.map(item => item.productId === p.id ? { ...item, quantity: item.quantity + step } : item);
       }
-      return [...prev, { productId: p.id, name: p.name, quantity: tracksStock ? Math.min(step, p.stock) : step, price: p.price, hsn: p.hsn }];
+      return [...prev, { productId: p.id, name: p.name, quantity: tracksStock ? Math.min(step, p.stock) : step, price: p.price, hsn: p.hsn, unit: tracksStock ? (p.stockUnit || 'pcs') : 'svc' }];
     });
   };
 
@@ -787,10 +1024,21 @@ export default function OfflinePosPage() {
   // Complete & Save Bill Offline
   const finishSale = async () => {
     if (!cart.length || saleInProgress.current) return;
+    if (!customerGstinValid) {
+      notify('warning', 'Check the customer GSTIN', 'A GSTIN has 15 characters, like 33ABCDE1234F1Z5. Fix it or leave it empty for a B2C bill.');
+      return;
+    }
     saleInProgress.current = true;
     setSavingSale(true);
     const date = new Date().toISOString();
-    const number = `INV-${date.slice(2, 10).replaceAll('-', '')}-${String(sales.length + 1).padStart(3, '0')}`;
+    // Unique, consecutive per-day invoice series (GST Rule 46: ≤16 chars, unique per financial year)
+    const datePrefix = `INV-${date.slice(2, 10).replaceAll('-', '')}-`;
+    const nextSeq = sales.reduce((max, s) => {
+      if (!s.number?.startsWith(datePrefix)) return max;
+      const seq = Number(s.number.slice(datePrefix.length));
+      return Number.isFinite(seq) && seq > max ? seq : max;
+    }, 0) + 1;
+    const number = `${datePrefix}${String(nextSeq).padStart(3, '0')}`;
     const sale: Sale = {
       id: makeId(),
       number,
@@ -809,8 +1057,19 @@ export default function OfflinePosPage() {
       pickup,
       orderType,
       ...(industry.key === 'restaurant' && tableNumber.trim() ? { tableNumber: tableNumber.trim() } : {}),
+      ...(resolvedCustomerState ? { placeOfSupply: `${resolvedCustomerState.name} (${resolvedCustomerState.code})` } : {}),
+      isInterstate: isInterstateSale,
+      ...(customerGstinClean ? { customerGstin: customerGstinClean } : {}),
+      ...(customerAddress.trim() ? { customerAddress: customerAddress.trim() } : {}),
       sync: 'pending',
     };
+    const nextAudit = appendAudit(auditLog, {
+      action: 'sale.created',
+      summary: `${number} · ${sale.customer} · ${sale.items.length} item${sale.items.length === 1 ? '' : 's'} · ${method}`,
+      actor: auditActor,
+      ref: number,
+      amount: total,
+    });
 
     const nextSales = [sale, ...sales];
     const nextProducts = products.map(p => {
@@ -826,10 +1085,10 @@ export default function OfflinePosPage() {
     });
 
     try {
-      const mode = await saveOfflinePosData({ products: nextProducts, sales: nextSales, shop, taxEnabled, taxRate }, activeTenantId);
+      const mode = await saveOfflinePosData({ products: nextProducts, sales: nextSales, shop, taxEnabled, taxRate, auditLog: nextAudit, lastSyncedAt, lastBackupAt }, activeTenantId);
       setStorageMode(mode);
     } catch (error) {
-      setToast(error instanceof Error ? error.message : 'Could not save bill offline.');
+      notify('error', 'This bill wasn’t saved', error instanceof Error ? error.message : 'Device storage refused the bill. Free some space and try again.');
       saleInProgress.current = false;
       setSavingSale(false);
       return;
@@ -837,6 +1096,7 @@ export default function OfflinePosPage() {
 
     setSales(nextSales);
     setProducts(nextProducts);
+    setAuditLog(nextAudit);
     setCart([]);
     setCustomer('');
     setPhone('');
@@ -844,10 +1104,21 @@ export default function OfflinePosPage() {
     setPickup('');
     setOrderType(industry.orderTypes[0] || 'Counter sale');
     setTableNumber('');
+    setCustomerState('');
+    setCustomerGstin('');
+    setCustomerAddress('');
+    setShowExtraBillFields(false);
     setDiscount(0);
     setMobileCartOpen(false);
     setCompletedSale(sale);
-    setToast(`✓ Bill saved offline · ${number}`);
+    void saveInvoiceToLaptop(sale);
+    notify(
+      'success',
+      `Bill ${number} saved`,
+      online && posSessionMode === 'online'
+        ? `${money(total)} received via ${method}. Syncing to the cloud in the background.`
+        : `${money(total)} received via ${method}. Saved securely on this device — it will sync when you’re back online.`,
+    );
     if (autoPrintOnComplete === 'bill') {
       try {
         printInvoiceDocument(sale, shop, { template: invoiceTemplate, paperWidth });
@@ -945,6 +1216,7 @@ export default function OfflinePosPage() {
       setAddProductModalOpen(false);
       resetProductForm();
       setToast(`Updated ${updated.name}; stock history saved.`);
+      recordAudit('product.updated', `${updated.name} edited`);
       return;
     }
 
@@ -974,6 +1246,7 @@ export default function OfflinePosPage() {
     setAddProductModalOpen(false);
     resetProductForm();
     setToast(`✓ Added product: ${newProduct.name}`);
+    recordAudit('product.created', `${newProduct.name} at ${money(newProduct.price)}`);
   };
 
   const handlePurchaseBillUpload = async (file?: File) => {
@@ -1017,6 +1290,7 @@ export default function OfflinePosPage() {
       setStorageMode(mode);
       setProducts(nextProducts);
       setToast(`${stockDirection === 'IN' ? 'Stock received' : 'Stock removed'} · ${product.name}: ${stockChange} ${product.stockUnit || 'units'}`);
+      recordAudit('stock.moved', `${stockDirection} ${stockChange} ${product.stockUnit || 'units'} · ${product.name} · ${stockReason.trim() || 'manual'}`);
       setStockModalProduct(null);
       setStockChange('');
       setStockReason('Purchase / restock');
@@ -1049,7 +1323,7 @@ export default function OfflinePosPage() {
       s.subtotal, s.discount, s.taxRate, s.gst, s.total, s.paid, s.method, s.orderType || '', s.tableNumber || '', s.pickup || '', s.note, s.sync
     ]);
     const csv = [header, ...rows].map(row => row.map(csvCell).join(',')).join('\r\n');
-    download(`billpilot-sales-${activeTenantId}-${new Date().toISOString().slice(0, 10)}.csv`, `\uFEFF${csv}`, 'text/csv;charset=utf-8');
+    download(`ollaibooks-sales-${activeTenantId}-${new Date().toISOString().slice(0, 10)}.csv`, `\uFEFF${csv}`, 'text/csv;charset=utf-8');
     setToast('Sales CSV exported for Excel / Google Sheets');
   };
 
@@ -1058,7 +1332,7 @@ export default function OfflinePosPage() {
     const header = ['Name', 'Category', 'Selling Price (INR)', 'In Stock', 'Unit', 'Purchase Date', 'Purchase Cost (INR)', 'Weight / Pack Size', 'Extra Details', 'HSN / SAC Code', 'Purchase Bill'];
     const rows = products.map(p => [p.name, p.category, p.price, p.stock, p.stockUnit || 'pcs', p.purchaseDate || '', p.purchasePrice || 0, p.weight || '', p.extra || '', p.hsn || '', p.purchaseBill?.name || '']);
     const csv = [header, ...rows].map(row => row.map(csvCell).join(',')).join('\r\n');
-    download(`billpilot-catalog-${activeTenantId}-${new Date().toISOString().slice(0, 10)}.csv`, `\uFEFF${csv}`, 'text/csv;charset=utf-8');
+    download(`ollaibooks-catalog-${activeTenantId}-${new Date().toISOString().slice(0, 10)}.csv`, `\uFEFF${csv}`, 'text/csv;charset=utf-8');
     setToast('Products catalogue exported to CSV');
   };
 
@@ -1109,7 +1383,7 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
           category: category.trim(),
           price: isNaN(price) ? 100 : price,
           stock: isNaN(stock) ? 50 : stock,
-          emoji: '📦',
+          emoji: 'icon:package',
           color: '#f0f9ff',
           hsn: hsn ? String(hsn).trim() : undefined,
           stockUnit: String(unit).trim() || 'pcs',
@@ -1141,20 +1415,76 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
       setImportExcelModalOpen(false);
       const skipped = importedProducts.length - newProducts.length;
       setToast(`Added ${newProducts.length} products offline${skipped ? ` · skipped ${skipped} duplicates` : ''}. Existing products were kept.`);
+      recordAudit('product.imported', `Imported ${newProducts.length} products${skipped ? `, skipped ${skipped}` : ''}`);
     } catch (err: any) {
       setToast(err.message || 'Could not parse spreadsheet file. Please upload a standard CSV.');
     }
   };
 
   // Full Device Backup & Restore (JSON)
-  const exportBackup = () => {
-    download(
-      `billpilot-backup-${activeTenantId}-${new Date().toISOString().slice(0, 10)}.json`,
-      JSON.stringify({ version: 3, tenantId: activeTenantId, exportedAt: new Date().toISOString(), shop, products, sales, reminders, taxEnabled, taxRate }, null, 2),
-      'application/json'
-    );
-    setToast('Full device backup downloaded');
+  const backupJson = () => JSON.stringify({ version: 4, app: 'ollaiBooks', tenantId: activeTenantId, exportedAt: new Date().toISOString(), shop, products, sales, reminders, taxEnabled, taxRate, auditLog }, null, 2);
+  const backupFileName = () => `ollaibooks-backup-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}`;
+
+  const exportBackup = async (options?: { silent?: boolean }) => {
+    const bridge = getDesktopBridge();
+    const at = new Date().toISOString();
+    if (bridge) {
+      const result = await bridge.saveBackupFile({ json: backupJson(), fileName: backupFileName(), business: shop.name });
+      if (!result.ok) {
+        notify('error', 'Backup not saved', result.error || 'Check that the Documents folder is writable.');
+        return;
+      }
+      setLastBackupAt(at);
+      recordAudit('backup.exported', `${options?.silent ? 'Automatic' : 'Manual'} backup saved (${sales.length} bills, ${products.length} products)`);
+      notify('success', options?.silent ? 'Daily backup saved' : 'Backup saved on this laptop', result.path, {
+        duration: options?.silent ? 5000 : 8000,
+        action: { label: 'Open folder', onClick: () => { void bridge.openFolder('backups', shop.name); } },
+      });
+      return;
+    }
+    download(`${backupFileName()}.json`, backupJson(), 'application/json');
+    setLastBackupAt(at);
+    notify('success', 'Backup downloaded', 'Keep this file somewhere safe — a pen drive or Google Drive works well.');
+    recordAudit('backup.exported', `Backup exported (${sales.length} bills, ${products.length} products)`);
   };
+
+  /** Desktop app: save every invoice as a PDF in Documents/ollaiBooks/<Business>/Invoices/YYYY/MM-Mon. */
+  const saveInvoiceToLaptop = async (sale: Sale, options?: { announce?: boolean }) => {
+    const bridge = getDesktopBridge();
+    if (!bridge) return;
+    const html = buildInvoiceHtml(sale, shop, { template: 'classic-gst', autoPrint: false });
+    const result = await bridge.saveInvoiceFile({ html, fileName: sale.number, business: shop.name, date: sale.date });
+    if (!result.ok || !result.path) {
+      notify('warning', 'Invoice PDF not saved', `${sale.number} is safe in the app, but the PDF couldn’t be written: ${result.error || 'unknown error'}.`);
+      return;
+    }
+    setSales(current => current.map(s => (s.id === sale.id ? { ...s, filePath: result.path } : s)));
+    if (options?.announce) {
+      notify('success', 'Invoice PDF saved', result.path, { action: { label: 'Open folder', onClick: () => { void bridge.openFolder('invoices', shop.name); } } });
+    }
+  };
+
+  // Desktop paths + signed-in account details for the "Account, Data & Help" tab
+  React.useEffect(() => {
+    try { setAccount(JSON.parse(sessionStorage.getItem('ollaibooks_account') || 'null')); } catch { setAccount(null); }
+    const bridge = getDesktopBridge();
+    if (bridge) void bridge.getPaths(shop.name).then(setDesktopPaths).catch(() => setDesktopPaths(null));
+  }, [shop.name]);
+
+  // Automatic daily backup in the desktop app (keeps the newest 30 on disk)
+  const autoBackupDone = React.useRef(false);
+  React.useEffect(() => {
+    if (!ready || loadedTenantId !== activeTenantId || autoBackupDone.current || !getDesktopBridge() || !sales.length) return;
+    const age = lastBackupAt ? Date.now() - new Date(lastBackupAt).getTime() : Infinity;
+    if (age < 24 * 3600_000) return;
+    autoBackupDone.current = true;
+    const timer = window.setTimeout(() => { void exportBackup({ silent: true }); }, 4000);
+    return () => window.clearTimeout(timer);
+  }, [ready, loadedTenantId, activeTenantId, sales.length, lastBackupAt]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const backupAgeDays = lastBackupAt ? Math.floor((Date.now() - new Date(lastBackupAt).getTime()) / 864e5) : null;
+  const billsSinceBackup = lastBackupAt ? sales.filter(s => s.date > lastBackupAt).length : sales.length;
+  const backupOverdue = sales.length > 0 && (backupAgeDays === null || backupAgeDays >= 7);
 
   const importBackup = async (file?: File) => {
     if (!file) return;
@@ -1173,6 +1503,7 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
       if (typeof data.taxEnabled === 'boolean') setTaxEnabled(data.taxEnabled);
       if (typeof data.taxRate === 'number') setTaxRate(data.taxRate);
       setToast('Backup restored successfully on this device');
+      recordAudit('backup.restored', `Backup merged: ${data.sales.length} bills, ${data.products.length} products`);
     } catch {
       setToast('Failed to read file. Choose a valid ollaiBooks JSON backup.');
     }
@@ -1196,6 +1527,7 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
     { id: 'sales', label: 'Sales & Invoices', icon: FileSpreadsheet },
     { id: 'products', label: industry.key === 'salon' ? 'Services & Products' : industry.key === 'restaurant' ? 'Menu & Stock' : industry.key === 'bakery' ? 'Bakery Catalog' : 'Catalog & Stock', icon: Package },
     { id: 'settings', label: 'Store & Tax Setup', icon: Settings2 },
+    { id: 'help', label: 'Account, Data & Help', icon: CircleHelp },
   ] as const;
 
   return !authReady || !ready || loadedTenantId !== activeTenantId ? (
@@ -1226,10 +1558,12 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
             className="pos-store-select w-full text-left cursor-pointer hover:border-blue-400 transition"
             title="Switch Tenant Workspace"
           >
-            <div className="pos-store-avatar">{shop.name.slice(0, 1).toUpperCase()}</div>
+            <div className={`pos-store-avatar ${shop.logo ? 'has-logo' : ''}`}>
+              {shop.logo ? <img src={shop.logo} alt={`${shop.name} logo`} /> : shop.name.slice(0, 1).toUpperCase()}
+            </div>
             <span>
               <b>{shop.name}</b>
-              <small>Workspace: {activeTenantId.slice(0, 10)}</small>
+              <small>{shop.gstin ? `GSTIN ${shop.gstin}` : (resolvedShopState?.name || 'Tap to switch store')}</small>
             </span>
             <ChevronDown size={15} />
           </button>
@@ -1277,18 +1611,22 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
           <div className="pos-love">
             <ShieldCheck size={16} className="text-emerald-600 flex-shrink-0" />
             <div className="flex flex-col text-left">
-              <span className="font-bold text-slate-800 text-[11px]">Multi-Tenant Engine</span>
-              <span className="text-[9px] text-slate-500 font-normal">Retail · Marts · Boutiques · Services</span>
+              <span className="font-bold text-slate-800 text-[11px]">{vaultEncrypted ? 'Your data is encrypted' : 'Saved on this device'}</span>
+              <span className="text-[9px] text-slate-500 font-normal">{vaultEncrypted ? 'AES-256 vault · only this device can read it' : 'Export a backup now and then'}</span>
             </div>
           </div>
-          <div className="pos-sidebar-note">
+          <div className={`pos-sidebar-note ${online ? '' : 'is-offline'}`}>
             <span className="pos-dot" />
-            {storageMode === 'indexeddb' ? 'IndexedDB Engine · Instant Offline' : 'LocalStorage Engine'}
+            {!online
+              ? `Offline · ${pendingCount} bill${pendingCount === 1 ? '' : 's'} waiting to sync`
+              : pendingCount
+                ? `${pendingCount} bill${pendingCount === 1 ? '' : 's'} syncing soon`
+                : lastSyncedAt ? `All synced · ${new Date(lastSyncedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}` : 'All bills in sync'}
           </div>
           <div className="pos-support-links">
-            <span>ollaiBooks Enterprise Support</span>
-            <a href="tel:+919600732162">Call: +91 96007 32162</a>
-            <a href="https://wa.me/919600732162" target="_blank" rel="noreferrer">WhatsApp Instant Support</a>
+            <span>Need a hand? We’re here.</span>
+            <a href="tel:+919600732162">Call ollaiBooks: +91 96007 32162</a>
+            <a href="https://wa.me/919600732162" target="_blank" rel="noreferrer">Chat on WhatsApp</a>
           </div>
           <button
             className="pos-signout"
@@ -1327,6 +1665,17 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
             <Calculator size={15} /> Calculator
           </button>
 
+          {hasCounterPin && (
+            <button
+              type="button"
+              onClick={() => { setPinInput(''); setPinError(''); setCounterLocked(true); }}
+              className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm hover:bg-amber-50 hover:text-amber-800 hover:border-amber-200 transition"
+              title="Lock counter screen with PIN"
+            >
+              <Lock size={14} /> Lock
+            </button>
+          )}
+
           {/* Quick Mobile Cart Pill Button */}
           {cart.length > 0 && (
             <button
@@ -1339,10 +1688,18 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
             </button>
           )}
 
-          <div className={`pos-connection ${online ? 'connected' : 'disconnected'}`}>
-            {online ? <Wifi size={15} /> : <WifiOff size={15} />}
-            <span>{online ? 'Online · Offline Ready' : 'Working 100% Offline'}</span>
-          </div>
+          <button
+            type="button"
+            onClick={requestSync}
+            className={`pos-connection ${online ? (pendingCount ? 'pending' : 'connected') : 'disconnected'}`}
+            title={online ? 'Click to sync bills to the cloud now' : 'You are offline — bills are saved on this device'}
+          >
+            {!online ? <WifiOff size={15} /> : syncingSales ? <RefreshCw size={15} className="animate-spin" /> : pendingCount ? <Cloud size={15} /> : <Wifi size={15} />}
+            <span>
+              {!online ? 'Offline' : syncingSales ? 'Syncing…' : pendingCount ? 'Online' : 'Online · Synced'}
+            </span>
+            {pendingCount > 0 && <i className="pos-connection-count">{pendingCount}</i>}
+          </button>
 
           <div className="pos-date">
             {new Date().toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}
@@ -1350,12 +1707,46 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
 
           <button
             className="pos-help"
-            onClick={() => setToast('All bills, products, and customer records save automatically to your device.')}
+            onClick={() => notify('info', 'How ollaiBooks keeps your data safe', 'Every bill, product and customer is saved instantly on this device in an encrypted vault, works without internet, and syncs to your cloud workspace when you’re online.', { duration: 8000 })}
             title="Help & Info"
           >
             <CircleHelp size={17} />
           </button>
         </header>
+
+        {!online && (
+          <div className="pos-offline-banner" role="status">
+            <OfflineCounterIllustration className="pos-offline-art" />
+            <div className="pos-offline-copy">
+              <b>You’re offline — and that’s completely fine.</b>
+              <span>
+                Keep billing as usual. {pendingCount
+                  ? `${pendingCount} bill${pendingCount === 1 ? ' is' : 's are'} saved and encrypted on this device, ready to sync.`
+                  : 'New bills will be saved and encrypted on this device.'}{' '}
+                We’ll sync everything automatically when the internet returns.
+              </span>
+              <div className="pos-offline-chips">
+                <span><ShieldCheck size={13} /> {vaultEncrypted ? 'AES-256 encrypted' : 'Stored locally'}</span>
+                <span><Printer size={13} /> Printing works</span>
+                <span><Building2 size={13} /> {shop.name}{shop.gstin ? ` · ${shop.gstin}` : ''}</span>
+              </div>
+            </div>
+            <button type="button" className="pos-offline-action" onClick={requestSync}>
+              <RefreshCw size={14} /> Try sync
+            </button>
+          </div>
+        )}
+
+        {backupOverdue && tab !== 'help' && (
+          <div className="pos-backup-banner" role="status">
+            <AlertCircle size={18} />
+            <span>
+              <b>{lastBackupAt ? `No backup for ${backupAgeDays} days.` : 'You haven’t made a backup yet.'}</b>{' '}
+              {billsSinceBackup} bill{billsSinceBackup === 1 ? '' : 's'} exist only inside this app. A backup takes 2 seconds.
+            </span>
+            <button type="button" onClick={() => void exportBackup()}>Back up now</button>
+          </div>
+        )}
 
         {tab === 'dashboard' && (
           <section className="pos-section">
@@ -1382,33 +1773,43 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
             <div className="grid gap-4 xl:grid-cols-2">
               <div className="pos-data-card">
                 <div className="pos-data-heading"><div><h2>Today’s payments</h2><span>Payment totals from bills saved on this device</span></div><Banknote size={19} className="text-emerald-600" /></div>
-                {Object.keys(todayPaymentTotals).length ? <div className="divide-y divide-slate-100">{Object.entries(todayPaymentTotals).map(([label, amount]) => <div key={label} className="flex items-center justify-between gap-3 py-3 text-xs"><span className="font-semibold text-slate-700">{label}</span><b>{money(amount)}</b></div>)}</div> : <p className="py-6 text-center text-xs text-slate-500">Payment totals will appear here after your first bill.</p>}
+                <div className="pos-card-body">
+                  {Object.keys(todayPaymentTotals).length ? <div className="divide-y divide-slate-100">{Object.entries(todayPaymentTotals).map(([label, amount]) => <div key={label} className="flex items-center justify-between gap-3 py-3 text-xs"><span className="font-semibold text-slate-700">{label}</span><b>{money(amount)}</b></div>)}</div> : <p className="py-6 text-center text-xs text-slate-500">Payment totals will appear here after your first bill.</p>}
+                </div>
               </div>
               <div className="pos-data-card">
                 <div className="pos-data-heading"><div><h2>Top-selling today</h2><span>Ranked by units sold in local bills</span></div><Activity size={19} className="text-blue-600" /></div>
-                {topSellingItems.length ? <div className="divide-y divide-slate-100">{topSellingItems.map((item, index) => <div key={`${item.name}:${index}`} className="flex items-center justify-between gap-3 py-3 text-xs"><span><b className="text-slate-900">{index + 1}. {item.name}</b><small className="mt-1 block text-slate-500">{item.quantity} sold</small></span><b>{money(item.revenue)}</b></div>)}</div> : <p className="py-6 text-center text-xs text-slate-500">Top products appear after you complete a bill.</p>}
+                <div className="pos-card-body">
+                  {topSellingItems.length ? <div className="divide-y divide-slate-100">{topSellingItems.map((item, index) => <div key={`${item.name}:${index}`} className="flex items-center justify-between gap-3 py-3 text-xs"><span><b className="text-slate-900">{index + 1}. {item.name}</b><small className="mt-1 block text-slate-500">{item.quantity} sold</small></span><b>{money(item.revenue)}</b></div>)}</div> : <p className="py-6 text-center text-xs text-slate-500">Top products appear after you complete a bill.</p>}
+                </div>
               </div>
               <div className="pos-data-card">
                 <div className="pos-data-heading"><div><h2>Current order book</h2><span>Combined view · shop and website orders stay labelled by source</span></div><button className="pos-secondary-action" onClick={() => setTab('sales')}>View all <span>→</span></button></div>
-                {orderBook.slice(0, 6).length ? <div className="divide-y divide-slate-100">{orderBook.slice(0, 6).map(order => <div key={`${order.source}:${order.id}`} className="flex flex-wrap items-center justify-between gap-3 py-3 text-xs"><div className="min-w-0"><b className="text-slate-900">{order.orderNumber}</b><span className={`ml-2 rounded-full px-2 py-0.5 font-bold ${order.source === 'shop' ? 'bg-blue-50 text-blue-700' : 'bg-violet-50 text-violet-700'}`}>{order.source === 'shop' ? 'SHOP' : 'WEBSITE'}</span><small className="mt-1 block truncate text-slate-500">{order.customerName} · {new Date(order.date).toLocaleString('en-IN')}</small>{order.source === 'shop' && (order.raw as Sale).orderType && <small className="mt-0.5 block text-blue-700">{(order.raw as Sale).orderType}{(order.raw as Sale).tableNumber ? ` · Table ${(order.raw as Sale).tableNumber}` : ''}</small>}</div><b>{money(order.total)}</b></div>)}</div> : <p className="py-6 text-center text-xs text-slate-500">No orders saved yet.</p>}
+                <div className="pos-card-body">
+                  {orderBook.slice(0, 6).length ? <div className="divide-y divide-slate-100">{orderBook.slice(0, 6).map(order => <div key={`${order.source}:${order.id}`} className="flex flex-wrap items-center justify-between gap-3 py-3 text-xs"><div className="min-w-0"><b className="text-slate-900">{order.orderNumber}</b><span className={`ml-2 rounded-full px-2 py-0.5 font-bold ${order.source === 'shop' ? 'bg-blue-50 text-blue-700' : 'bg-violet-50 text-violet-700'}`}>{order.source === 'shop' ? 'SHOP' : 'WEBSITE'}</span><small className="mt-1 block truncate text-slate-500">{order.customerName} · {new Date(order.date).toLocaleString('en-IN')}</small>{order.source === 'shop' && (order.raw as Sale).orderType && <small className="mt-0.5 block text-blue-700">{(order.raw as Sale).orderType}{(order.raw as Sale).tableNumber ? ` · Table ${(order.raw as Sale).tableNumber}` : ''}</small>}</div><b>{money(order.total)}</b></div>)}</div> : <p className="py-6 text-center text-xs text-slate-500">No orders saved yet.</p>}
+                </div>
               </div>
 
               <div className="pos-data-card">
                 <div className="pos-data-heading"><div><h2>Stock alerts</h2><span>Low quantities from this offline catalog</span></div><button className="pos-secondary-action" onClick={() => setTab('products')}>Manage stock <span>→</span></button></div>
-                {lowStockProducts.slice(0, 6).length ? <div className="divide-y divide-slate-100">{lowStockProducts.slice(0, 6).map(product => <div key={product.id} className="flex items-center justify-between gap-3 py-3 text-xs"><span><b className="text-slate-900">{product.name}</b><small className="mt-1 block text-slate-500">{product.category}</small></span><b className="rounded-full bg-amber-50 px-2.5 py-1 text-amber-800">{product.stock} {product.stockUnit || 'pcs'}</b></div>)}</div> : <p className="py-6 text-center text-xs text-slate-500">No low-stock items. Stock levels look healthy.</p>}
+                <div className="pos-card-body">
+                  {lowStockProducts.slice(0, 6).length ? <div className="divide-y divide-slate-100">{lowStockProducts.slice(0, 6).map(product => <div key={product.id} className="flex items-center justify-between gap-3 py-3 text-xs"><span><b className="text-slate-900">{product.name}</b><small className="mt-1 block text-slate-500">{product.category}</small></span><b className="rounded-full bg-amber-50 px-2.5 py-1 text-amber-800">{product.stock} {product.stockUnit || 'pcs'}</b></div>)}</div> : <p className="py-6 text-center text-xs text-slate-500">No low-stock items. Stock levels look healthy.</p>}
+                </div>
               </div>
 
               <div className="pos-data-card xl:col-span-2">
                 <div className="pos-data-heading"><div><h2>Offline calendar & reminders</h2><span>Private to this device and available without internet</span></div><span className="pos-method-pill">{upcomingReminders.length} upcoming</span></div>
-                <form onSubmit={addReminder} className="grid gap-2 rounded-xl bg-slate-50 p-3 sm:grid-cols-4">
-                  <input required maxLength={100} value={reminderTitle} onChange={e => setReminderTitle(e.target.value)} placeholder="Reminder title" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs" />
-                  <input required type="datetime-local" value={reminderDate} onChange={e => setReminderDate(e.target.value)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs" />
-                  <input maxLength={240} value={reminderNote} onChange={e => setReminderNote(e.target.value)} placeholder="Note (optional)" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs" />
-                  <button type="submit" className="pos-primary-action justify-center"><Plus size={14} /> Add reminder</button>
-                </form>
-                <div className="mt-3 divide-y divide-slate-100">
-                  {upcomingReminders.map(reminder => <div key={reminder.id} className="flex items-center justify-between gap-3 py-2.5 text-xs"><div><b className="text-slate-900">{reminder.title}</b><small className="mt-0.5 block text-slate-500">{new Date(reminder.startsAt).toLocaleString('en-IN')}{reminder.note ? ` · ${reminder.note}` : ''}</small></div><button aria-label={`Delete ${reminder.title}`} className="pos-row-action" onClick={() => setReminders(current => current.filter(item => item.id !== reminder.id))}><X size={14} /></button></div>)}
-                  {!upcomingReminders.length && <p className="py-3 text-xs text-slate-500">No upcoming reminders. Add a delivery, supplier call or follow-up above.</p>}
+                <div className="pos-card-body">
+                  <form onSubmit={addReminder} className="grid gap-2.5 rounded-xl border border-slate-200/80 bg-slate-50 p-3.5 sm:grid-cols-4">
+                    <input required maxLength={100} value={reminderTitle} onChange={e => setReminderTitle(e.target.value)} placeholder="Reminder title" className="min-w-0 h-10 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-900 focus:border-blue-600 focus:outline-none" />
+                    <input required type="datetime-local" value={reminderDate} onChange={e => setReminderDate(e.target.value)} className="min-w-0 h-10 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-900 focus:border-blue-600 focus:outline-none" />
+                    <input maxLength={240} value={reminderNote} onChange={e => setReminderNote(e.target.value)} placeholder="Note (optional)" className="min-w-0 h-10 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-900 focus:border-blue-600 focus:outline-none" />
+                    <button type="submit" className="pos-primary-action justify-center"><Plus size={14} /> Add reminder</button>
+                  </form>
+                  <div className="mt-3 divide-y divide-slate-100">
+                    {upcomingReminders.map(reminder => <div key={reminder.id} className="flex items-center justify-between gap-3 py-2.5 text-xs"><div><b className="text-slate-900">{reminder.title}</b><small className="mt-0.5 block text-slate-500">{new Date(reminder.startsAt).toLocaleString('en-IN')}{reminder.note ? ` · ${reminder.note}` : ''}</small></div><button aria-label={`Delete ${reminder.title}`} className="pos-row-action" onClick={() => setReminders(current => current.filter(item => item.id !== reminder.id))}><X size={14} /></button></div>)}
+                    {!upcomingReminders.length && <p className="py-4 text-xs text-slate-500">No upcoming reminders. Add a delivery, supplier call or follow-up above.</p>}
+                  </div>
                 </div>
               </div>
             </div>
@@ -1583,80 +1984,155 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                     ))
                   ) : (
                     <div className="pos-cart-empty">
-                      <span className="pos-empty-illustration">🛒</span>
-                      <b>Your bill is currently empty</b>
-                      <span>Click on any product to add it to the bill.</span>
+                      <EmptyCartIllustration className="w-28 h-auto" />
+                      <b>Ready for the next customer</b>
+                      <span>Tap any item on the left to start a bill. It works with or without internet.</span>
                     </div>
                   )}
                 </div>
 
-                {/* Customer Info Form with Icons */}
+                {/* Compact Customer & Order Details */}
                 <div className="pos-cart-details">
-                  <div className={industry.key === 'restaurant' && orderType === 'Dine-in' ? 'pos-input-row' : 'pos-field'}>
-                    <label className="pos-field-label">
-                      <span>{industry.key === 'salon' ? 'Visit type' : industry.key === 'restaurant' ? 'Order type' : 'Sale type'}</span>
-                      <select value={orderType} onChange={e => setOrderType(e.target.value)}>
-                        {industry.orderTypes.map(value => <option key={value} value={value}>{value}</option>)}
-                      </select>
-                    </label>
-                    {industry.key === 'restaurant' && orderType === 'Dine-in' && (
-                      <label className="pos-field-label">
-                        <span>Table number</span>
-                        <input value={tableNumber} onChange={e => setTableNumber(e.target.value)} placeholder="e.g. 4" />
-                      </label>
-                    )}
+                  <div className="pos-order-type-bar" role="group" aria-label="Sale type">
+                    {industry.orderTypes.map(value => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setOrderType(value)}
+                        className={`pos-order-pill ${orderType === value ? 'active' : ''}`}
+                      >
+                        {value}
+                      </button>
+                    ))}
                   </div>
 
-                  <label className="pos-field-label">
-                    <span className="flex items-center gap-1.5">
-                      <User size={13} className="text-blue-600" />
-                      <span>{industry.customerLabel} name</span>
-                      <span className="font-normal text-slate-400">(optional)</span>
-                    </span>
-                    <input
-                      value={customer}
-                      onChange={e => setCustomer(e.target.value)}
-                      placeholder={`${industry.customerLabel} name (optional)`}
-                    />
-                  </label>
+                  {industry.key === 'restaurant' && orderType === 'Dine-in' && (
+                    <label className="pos-field-label">
+                      <span>Table number</span>
+                      <input value={tableNumber} onChange={e => setTableNumber(e.target.value)} placeholder="e.g. Table 4" />
+                    </label>
+                  )}
 
-                  <label className="pos-field-label">
-                    <span className="flex items-center gap-1.5">
-                      <Smartphone size={13} className="text-blue-600" />
-                      <span>Phone (WhatsApp)</span>
-                    </span>
-                    <input
-                      inputMode="tel"
-                      value={phone}
-                      onChange={e => setPhone(e.target.value)}
-                      placeholder="+91 98765 43210"
-                    />
-                  </label>
+                  <div className="pos-input-row">
+                    <label className="pos-field-label">
+                      <span className="flex items-center gap-1">
+                        <User size={12} className="text-blue-600" />
+                        <span>{industry.customerLabel}</span>
+                      </span>
+                      <input
+                        list="pos-offline-customers"
+                        value={customer}
+                        onChange={e => {
+                          const val = e.target.value;
+                          setCustomer(val);
+                          const match = recentCustomers.find(c => c.name.toLowerCase() === val.trim().toLowerCase());
+                          if (match) {
+                            if (match.phone && !phone) setPhone(match.phone);
+                            if (match.state && !customerState) setCustomerState(match.state);
+                          }
+                        }}
+                        placeholder="Walk-in"
+                      />
+                      <datalist id="pos-offline-customers">
+                        {recentCustomers.map(c => (
+                          <option key={c.name} value={c.name}>{c.phone ? `${c.name} (${c.phone})` : c.name}</option>
+                        ))}
+                      </datalist>
+                    </label>
 
-                  <label className="pos-field-label">
-                    <span className="flex items-center gap-1.5">
-                      <Clock size={13} className="text-blue-600" />
-                      <span>{industry.dateLabel}</span>
-                    </span>
-                    <input
-                      type="datetime-local"
-                      value={pickup}
-                      onChange={e => setPickup(e.target.value)}
-                      title={industry.dateTitle}
-                    />
-                  </label>
+                    <label className="pos-field-label">
+                      <span className="flex items-center gap-1">
+                        <Smartphone size={12} className="text-blue-600" />
+                        <span>Phone</span>
+                      </span>
+                      <input
+                        inputMode="tel"
+                        value={phone}
+                        onChange={e => setPhone(e.target.value)}
+                        placeholder="+91 98765..."
+                      />
+                    </label>
+                  </div>
 
-                  <label className="pos-field-label">
-                    <span className="flex items-center gap-1.5">
-                      <FileText size={13} className="text-blue-600" />
-                      <span>{industry.notesLabel}</span>
+                  <button
+                    type="button"
+                    onClick={() => setShowExtraBillFields(prev => !prev)}
+                    className="pos-extra-toggle"
+                  >
+                    <Clock size={12} />
+                    <span>
+                      {showExtraBillFields || pickup || note || customerGstin
+                        ? 'Hide GST, delivery & note fields'
+                        : `+ Add customer GSTIN, ${industry.dateLabel.toLowerCase()} or notes`}
                     </span>
-                    <input
-                      value={note}
-                      onChange={e => setNote(e.target.value)}
-                      placeholder={industry.notesPlaceholder}
-                    />
-                  </label>
+                  </button>
+
+                  {(showExtraBillFields || pickup || note || customerState || customerGstin || customerAddress) && (
+                    <div className="pos-extra-fields">
+                      <label className="pos-field-label">
+                        <span>Customer GSTIN <small className="pos-label-muted">(for B2C bills, leave this empty)</small></span>
+                        <input
+                          value={customerGstin}
+                          onChange={e => setCustomerGstin(e.target.value.toUpperCase().replace(/\s/g, ''))}
+                          placeholder="33ABCDE1234F1Z5"
+                          maxLength={15}
+                          aria-invalid={!customerGstinValid}
+                          className={!customerGstinValid ? 'pos-input-error' : ''}
+                        />
+                        {customerGstinClean && (
+                          <small className={customerGstinValid ? 'pos-hint-ok' : 'pos-hint-error'}>
+                            {customerGstinValid
+                              ? `B2B invoice · ${resolvedCustomerState?.name || 'state'} · ${isInterstateSale ? 'IGST applies' : 'CGST + SGST applies'}`
+                              : `${customerGstinClean.length}/15 — check the format`}
+                          </small>
+                        )}
+                      </label>
+
+                      {customerGstinClean && (
+                        <label className="pos-field-label">
+                          <span>Customer billing address</span>
+                          <input value={customerAddress} onChange={e => setCustomerAddress(e.target.value)} placeholder="Door no, street, city, PIN" />
+                        </label>
+                      )}
+
+                      <label className="pos-field-label">
+                        <span>Place of Supply (Customer State)</span>
+                        <select value={customerState} onChange={e => setCustomerState(e.target.value)}>
+                          <option value="">
+                            {resolvedShopState ? `Same as store · ${resolvedShopState.name} (${resolvedShopState.code})` : 'Same as store (CGST + SGST)'}
+                          </option>
+                          {INDIAN_GST_STATES.map(st => (
+                            <option key={st.code} value={st.name}>{st.name} ({st.code})</option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <label className="pos-field-label">
+                        <span className="flex items-center gap-1">
+                          <Clock size={12} className="text-blue-600" />
+                          <span>{industry.dateLabel}</span>
+                        </span>
+                        <input
+                          type="datetime-local"
+                          value={pickup}
+                          onChange={e => setPickup(e.target.value)}
+                          title={industry.dateTitle}
+                        />
+                      </label>
+
+                      <label className="pos-field-label">
+                        <span className="flex items-center gap-1">
+                          <FileText size={12} className="text-blue-600" />
+                          <span>{industry.notesLabel}</span>
+                        </span>
+                        <input
+                          value={note}
+                          onChange={e => setNote(e.target.value)}
+                          placeholder={industry.notesPlaceholder}
+                        />
+                      </label>
+                    </div>
+                  )}
                 </div>
 
                 {/* Calculations & Totals */}
@@ -1666,7 +2142,7 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                     <b>{money(subtotal)}</b>
                   </div>
                   <div className="pos-discount-row">
-                    <span>GST <small>{taxRate}%</small></span>
+                    <span>{isInterstateSale ? 'IGST' : 'GST'} <small>{taxRate}%</small></span>
                     <b>{money(gst)}</b>
                   </div>
                   <div className="pos-discount-input">
@@ -1722,7 +2198,10 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                 </button>
 
                 <div className="pos-safe-note">
-                  <CloudOff size={14} /> Saved securely on this device (Works 100% Offline)
+                  {online ? <ShieldCheck size={14} /> : <CloudOff size={14} />}
+                  {online
+                    ? 'Saved on this device first, then synced to the cloud'
+                    : 'Offline mode · saved encrypted on this device, syncs later'}
                 </div>
               </aside>
             </div>
@@ -1762,7 +2241,9 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                 <span>Pending online sync</span>
                 <b>{pendingCount}</b>
                 <small>{syncMessage}</small>
-                {pendingCount > 0 && <button type="button" className="mt-2 text-xs font-bold text-blue-700 disabled:text-slate-400" onClick={() => void syncPendingSales()} disabled={syncingSales || !online || !ready || posSessionMode !== 'online'}>{syncingSales ? 'Syncing…' : posSessionMode === 'offline' ? 'Sign in online to sync' : 'Sync now'}</button>}
+                <button type="button" className="mt-2 inline-flex items-center gap-1 self-start text-left text-xs font-bold text-blue-700 hover:underline" onClick={requestSync}>
+                  {syncingSales ? <><RefreshCw size={12} className="animate-spin" /> Syncing…</> : !online ? <><CloudOff size={12} /> Sync (offline)</> : posSessionMode === 'offline' ? 'Sign in online to sync' : pendingCount ? 'Sync now →' : <><CheckCircle2 size={12} /> All synced</>}
+                </button>
               </div>
               <div className="pos-metric-card">
                 <span>Catalog items</span>
@@ -1775,14 +2256,14 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
               <div className="pos-data-heading">
                 <div>
                   <h2>Order book</h2>
-                  <span>Shop bills are stored offline; website orders use the latest saved online copy</span>
+                  <span>Shop bills live on this device. Website orders show the copy saved {websiteOrdersSavedAt ? new Date(websiteOrdersSavedAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'when you were last online'}{online ? '' : ' (offline view)'}.</span>
                 </div>
-                <button className="pos-secondary-action" onClick={exportBackup}>
+                <button className="pos-secondary-action" onClick={() => void exportBackup()}>
                   <Download size={16} /> Full Backup
                 </button>
               </div>
 
-              <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-col gap-3 border-b border-slate-100 bg-slate-50/50 px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex flex-wrap gap-2" role="tablist" aria-label="Order source">
                   {([{ id: 'all', label: `All orders (${orderBook.length})` }, { id: 'shop', label: `Shop (${sales.length})` }, { id: 'website', label: `Website (${websiteOrders.length})` }] as const).map(item => <button key={item.id} role="tab" aria-selected={orderBookTab === item.id} onClick={() => setOrderBookTab(item.id)} className={`rounded-lg border px-3 py-2 text-xs font-bold ${orderBookTab === item.id ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}>{item.label}</button>)}
                 </div>
@@ -1823,6 +2304,12 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                           </td>
                           <td>
                             <span className="pos-method-pill">{order.paymentMethod} · {order.paymentStatus}</span>
+                            {order.source === 'shop' && (
+                              (order.raw as Sale).sync === 'synced'
+                                ? <span className="pos-sync-chip synced" title={(order.raw as Sale).syncedAt ? `Synced ${new Date((order.raw as Sale).syncedAt!).toLocaleString('en-IN')}` : 'Synced'}><Cloud size={11} /> Synced</span>
+                                : <span className="pos-sync-chip pending" title="Saved on this device; waiting to sync"><CloudOff size={11} /> On device</span>
+                            )}
+                            {order.source === 'website' && <span className="pos-sync-chip cached" title="Copy of the online order kept on this device for offline viewing"><Download size={11} /> Cached copy</span>}
                             {order.source === 'shop' && (order.raw as Sale).orderType && <small className="mt-1 block text-slate-500">{(order.raw as Sale).orderType}{(order.raw as Sale).tableNumber ? ` · Table ${(order.raw as Sale).tableNumber}` : ''}</small>}
                           </td>
                           <td className="right">
@@ -1870,7 +2357,9 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                 </div>
               ) : (
                 <div className="pos-empty pos-empty-large">
-                  <span className="pos-empty-illustration">🧾</span>
+                  <span className="pos-empty-illustration flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100 text-slate-500">
+                    <Receipt size={24} />
+                  </span>
                   <b>No matching orders</b>
                   <span>{orderBookTab === 'website' && !websiteOrders.length ? 'Website orders appear here when this device is online and they are loaded.' : 'Try another source or search, or create a shop bill.'}</span>
                   <button className="pos-primary-action" onClick={() => setTab('billing')}>
@@ -1916,8 +2405,8 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
             <div className="pos-product-admin-grid">
               {products.map(p => (
                 <div className={`pos-stock-card ${p.isArchived ? 'opacity-60' : ''}`} key={p.id}>
-                  <span className="pos-product-art" style={{ background: p.color }}>
-                    {p.emoji}
+                  <span className="pos-product-art" style={{ background: p.color || '#f8fafc' }}>
+                    {renderProductCardArt(p)}
                   </span>
                   <div className="pos-stock-info">
                     <span>{p.category} {p.hsn ? `· HSN: ${p.hsn}` : ''}</span>
@@ -1954,12 +2443,117 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                     onClick={() => {
                       setProducts(prev => prev.map(item => item.id === p.id ? { ...item, isArchived: !item.isArchived } : item));
                       setToast(p.isArchived ? `${p.name} restored to billing.` : `${p.name} archived; its history and stock are preserved.`);
+                      recordAudit('product.archived', `${p.isArchived ? 'Restored' : 'Archived'} ${p.name}`);
                     }}
                   >
                     {p.isArchived ? <ArchiveRestore size={15} /> : <Archive size={15} />}
                   </button>
                 </div>
               ))}
+            </div>
+          </section>
+        )}
+
+        {/* TAB 5: Account, data on this laptop, backups & helpline */}
+        {tab === 'help' && (
+          <section className="pos-section">
+            <div className="pos-page-heading">
+              <div>
+                <div className="pos-eyebrow"><ShieldCheck size={14} /> YOUR ACCOUNT &amp; DATA</div>
+                <h1>Account, data &amp; help<span>.</span></h1>
+                <p>Who is signed in, where your invoices are saved, how safe your backups are, and how to reach us.</p>
+              </div>
+            </div>
+
+            <div className="pos-help-grid">
+              {/* Account */}
+              <div className="pos-data-card pos-help-card">
+                <div className="pos-data-heading"><div><h2>Account</h2><span>This counter’s sign-in and subscription</span></div><User size={20} /></div>
+                <dl className="pos-kv">
+                  <div><dt>Business</dt><dd>{shop.name}</dd></div>
+                  {shop.gstin && <div><dt>GSTIN</dt><dd>{shop.gstin}</dd></div>}
+                  <div><dt>Signed in as</dt><dd>{account?.name || '—'}{account?.email ? <small>{account.email}</small> : null}</dd></div>
+                  <div><dt>Sign-in type</dt><dd><span className={`pos-sync-chip ${posSessionMode === 'online' ? 'synced' : 'pending'}`}>{posSessionMode === 'online' ? 'Online sign-in' : 'Offline sign-in'}</span></dd></div>
+                  {(() => {
+                    const ws = workspaces.find(w => w.tenantId === activeTenantId) as (WorkspaceItem & { subscriptionEndsAt?: string }) | undefined;
+                    const offlineUntil = typeof window !== 'undefined' ? Number(sessionStorage.getItem('billdesk_pos_offline_expires_at') || 0) : 0;
+                    return (
+                      <>
+                        {ws?.subscriptionEndsAt && <div><dt>Subscription valid till</dt><dd>{new Date(ws.subscriptionEndsAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</dd></div>}
+                        {posSessionMode === 'offline' && offlineUntil > 0 && <div><dt>Offline access until</dt><dd>{new Date(offlineUntil).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}<small>Sign in online before this to keep billing.</small></dd></div>}
+                      </>
+                    );
+                  })()}
+                  <div><dt>App</dt><dd>{nativePlatformLabel()}{desktopPaths?.appVersion ? ` · v${desktopPaths.appVersion}` : ''}</dd></div>
+                  <div><dt>Cloud sync</dt><dd>{pendingCount ? `${pendingCount} bill${pendingCount === 1 ? '' : 's'} waiting` : 'All bills synced'}{lastSyncedAt ? <small>Last sync {new Date(lastSyncedAt).toLocaleString('en-IN')}</small> : null}</dd></div>
+                </dl>
+                <button type="button" className="pos-secondary-action mt-3" onClick={requestSync}><RefreshCw size={14} /> Sync now</button>
+              </div>
+
+              {/* Data on this laptop */}
+              <div className="pos-data-card pos-help-card">
+                <div className="pos-data-heading"><div><h2>Where your data is saved</h2><span>Everything stays on this device first</span></div><Monitor size={20} /></div>
+                {desktopPaths ? (
+                  <>
+                    <div className="pos-path-row">
+                      <div><b>Invoices (PDF)</b><code title={desktopPaths.invoices}>{desktopPaths.invoices}</code><small>Sorted by year and month. {sales.filter(s => s.filePath).length} of {sales.length} bills saved as PDF.</small></div>
+                      <button type="button" className="pos-secondary-action" onClick={() => void getDesktopBridge()?.openFolder('invoices', shop.name)}><ExternalLink size={14} /> Open</button>
+                    </div>
+                    <div className="pos-path-row">
+                      <div><b>Backups</b><code title={desktopPaths.backups}>{desktopPaths.backups}</code><small>A backup is saved automatically once a day. The newest 30 are kept.</small></div>
+                      <button type="button" className="pos-secondary-action" onClick={() => void getDesktopBridge()?.openFolder('backups', shop.name)}><ExternalLink size={14} /> Open</button>
+                    </div>
+                    <div className="pos-path-row">
+                      <div><b>App database (encrypted)</b><code title={desktopPaths.appData}>{desktopPaths.appData}</code><small>Don’t delete this folder — it holds your live bills, stock and settings.</small></div>
+                    </div>
+                    {sales.some(s => !s.filePath) && (
+                      <button
+                        type="button"
+                        className="pos-secondary-action mt-2"
+                        onClick={async () => {
+                          const missing = sales.filter(s => !s.filePath).slice(0, 200);
+                          notify('sync', `Saving ${missing.length} invoice PDF${missing.length === 1 ? '' : 's'}…`, 'You can keep billing meanwhile.');
+                          for (const s of missing) await saveInvoiceToLaptop(s);
+                          notify('success', 'Invoice PDFs saved', desktopPaths.invoices, { action: { label: 'Open folder', onClick: () => { void getDesktopBridge()?.openFolder('invoices', shop.name); } } });
+                        }}
+                      >
+                        <FileText size={14} /> Save missing invoice PDFs
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <p className="pos-help-note">Bills are stored in this app’s encrypted database. In the Windows/Mac app, every invoice is also saved as a PDF under <b>Documents › ollaiBooks › {shop.name} › Invoices</b>.</p>
+                )}
+              </div>
+
+              {/* Backup awareness */}
+              <div className={`pos-data-card pos-help-card ${backupOverdue ? 'pos-help-warn' : ''}`}>
+                <div className="pos-data-heading"><div><h2>Backups</h2><span>Your safety net if this laptop is lost or reset</span></div><ArrowDownToLine size={20} /></div>
+                <div className={`pos-backup-status ${backupOverdue ? 'warn' : 'ok'}`}>
+                  {backupOverdue ? <AlertCircle size={18} /> : <CheckCircle2 size={18} />}
+                  <div>
+                    <b>{lastBackupAt ? `Last backup ${backupAgeDays === 0 ? 'today' : `${backupAgeDays} day${backupAgeDays === 1 ? '' : 's'} ago`}` : 'No backup yet'}</b>
+                    <span>{billsSinceBackup ? `${billsSinceBackup} bill${billsSinceBackup === 1 ? '' : 's'} not in a backup yet.` : 'All bills are in your latest backup.'}</span>
+                  </div>
+                </div>
+                <ul className="pos-help-list">
+                  <li>Keep one copy <b>off this laptop</b> — a pen drive or Google Drive — every week.</li>
+                  <li>Bills also sync to your cloud workspace when you’re online.</li>
+                  <li>To move to a new laptop: install the app, sign in online, then <b>Restore backup</b> in Store &amp; Tax Setup.</li>
+                </ul>
+                <button type="button" className="pos-primary-action mt-3" onClick={() => void exportBackup()}><ArrowDownToLine size={14} /> Back up now</button>
+              </div>
+
+              {/* Helpline */}
+              <div className="pos-data-card pos-help-card">
+                <div className="pos-data-heading"><div><h2>Need help?</h2><span>Real people, {SUPPORT.hours}</span></div><CircleHelp size={20} /></div>
+                <div className="pos-helpline">
+                  <a href={SUPPORT.phoneHref}><Smartphone size={16} /><span><b>Call us</b>{SUPPORT.phone}</span></a>
+                  <a href={SUPPORT.whatsapp} target="_blank" rel="noreferrer"><Share2 size={16} /><span><b>WhatsApp</b>Fastest reply, send screenshots</span></a>
+                  <a href={`mailto:${SUPPORT.email}`}><FileText size={16} /><span><b>Email</b>{SUPPORT.email}</span></a>
+                </div>
+                <p className="pos-help-note">When you contact us, share your business name and app version{desktopPaths?.appVersion ? ` (v${desktopPaths.appVersion})` : ''}. Never share your password or PIN.</p>
+              </div>
             </div>
           </section>
         )}
@@ -1983,9 +2577,45 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                 <div className="pos-data-heading">
                   <div>
                     <h2>Business Profile</h2>
-                    <span>These details print on thermal receipts and offline invoices</span>
+                    <span>Your customers see this on every receipt, GST invoice and KOT</span>
                   </div>
                   <Building2 size={21} />
+                </div>
+                <div className="pos-logo-row">
+                  <div className="pos-logo-preview">
+                    {shop.logo ? <img src={shop.logo} alt={`${shop.name} logo`} /> : <LogoUploadIllustration className="w-14 h-14" />}
+                  </div>
+                  <div className="pos-logo-copy">
+                    <b>Company logo</b>
+                    <span>Shows in the app, on A4 invoices and (in black &amp; white) on thermal bills. PNG or JPG with a clear background works best.</span>
+                    <div className="pos-logo-actions">
+                      <label className="pos-secondary-action pos-import-button cursor-pointer">
+                        <Upload size={14} /> {shop.logo ? 'Change logo' : 'Upload logo'}
+                        <input
+                          type="file"
+                          accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                          onChange={async e => {
+                            const file = e.target.files?.[0];
+                            e.target.value = '';
+                            if (!file) return;
+                            try {
+                              const logo = await resizeLogo(file);
+                              setShop(prev => ({ ...prev, logo }));
+                              recordAudit('logo.updated', `Logo uploaded (${file.name})`);
+                              notify('success', 'Logo looks great', 'It’s saved on this device and will appear on all your bills — even offline.');
+                            } catch (error) {
+                              notify('error', 'Logo not added', error instanceof Error ? error.message : 'Try a different image.');
+                            }
+                          }}
+                        />
+                      </label>
+                      {shop.logo && (
+                        <button type="button" className="text-xs font-semibold text-rose-600 hover:underline" onClick={() => { setShop(prev => ({ ...prev, logo: undefined })); recordAudit('logo.updated', 'Logo removed'); notify('info', 'Logo removed', 'Bills will show your store initial instead.'); }}>
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 </div>
                 <label>
                   Legal Business / Store Name
@@ -2025,118 +2655,393 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                   />
                 </label>
                 <label>
-                  GSTIN <span className="pos-label-muted">(15 characters)</span>
+                  <span>GSTIN <span className="pos-label-muted">(15 chars · auto-detects state)</span></span>
                   <input
                     value={shop.gstin}
-                    onChange={e => setShop({ ...shop, gstin: e.target.value.toUpperCase() })}
+                    onChange={e => {
+                      const nextGstin = e.target.value.toUpperCase();
+                      const detected = detectGstState(nextGstin);
+                      setShop({
+                        ...shop,
+                        gstin: nextGstin,
+                        ...(detected ? { state: detected.name } : {}),
+                      } as typeof shop);
+                    }}
                     placeholder="29ABCDE1234F1Z5"
                     maxLength={15}
                   />
                 </label>
-              </div>
-
-              {/* Machine Printing & Invoice Templates Card */}
-              <div className="pos-data-card pos-settings-card">
-                <div className="pos-data-heading">
-                  <div>
-                    <h2>Machine Printing &amp; Invoice Templates</h2>
-                    <span>Configure thermal machine width, extra GST invoice template, and auto-print</span>
-                  </div>
-                  <Printer size={21} />
-                </div>
                 <label>
-                  Default Bill / Invoice Template
+                  <span>Business State <span className="pos-label-muted">(CGST+SGST vs IGST)</span></span>
                   <select
-                    value={invoiceTemplate}
-                    onChange={e => setInvoiceTemplate(e.target.value as InvoiceTemplateId)}
+                    value={(shop as { state?: string }).state || resolvedShopState?.name || ''}
+                    onChange={e => setShop({ ...shop, state: e.target.value } as typeof shop)}
                   >
-                    <option value="thermal">Thermal POS Receipt (80mm / 58mm Machine)</option>
-                    <option value="classic-gst">Classic GST Tax Invoice (A4 Bordered)</option>
-                    <option value="modern-gst">Modern Branded GST Invoice (Extra A4 Template)</option>
+                    <option value="">Auto-detect from GSTIN / Address</option>
+                    {INDIAN_GST_STATES.map(st => (
+                      <option key={st.code} value={st.name}>{st.name} ({st.code})</option>
+                    ))}
                   </select>
                 </label>
+                {shop.gstin && !GSTIN_PATTERN.test(shop.gstin) && (
+                  <small className="pos-hint-error">This GSTIN doesn’t look complete yet. It should be 15 characters, e.g. 33ABCDE1234F1Z5.</small>
+                )}
                 <label>
-                  Thermal Machine Paper Width
+                  <span>GST registration <span className="pos-label-muted">(decides the invoice title)</span></span>
                   <select
-                    value={paperWidth}
-                    onChange={e => setPaperWidth(e.target.value as ThermalPaperWidth)}
+                    value={shop.gstRegistration || (shop.gstin ? 'regular' : 'unregistered')}
+                    onChange={e => setShop({ ...shop, gstRegistration: e.target.value as GstRegistrationType })}
                   >
-                    <option value="80mm">80mm Standard POS Thermal Roll</option>
-                    <option value="58mm">58mm Compact / Handheld Machine Roll</option>
+                    <option value="regular">Regular taxpayer · prints “TAX INVOICE”</option>
+                    <option value="composition">Composition scheme · prints “BILL OF SUPPLY”</option>
+                    <option value="unregistered">Not registered · prints “CASH MEMO”</option>
                   </select>
                 </label>
-                <label>
-                  After Completing Sale (Auto-Print)
-                  <select
-                    value={autoPrintOnComplete}
-                    onChange={e => setAutoPrintOnComplete(e.target.value as 'none' | 'bill' | 'kot-and-bill')}
-                  >
-                    <option value="none">Show Print &amp; KOT Popup (Recommended)</option>
-                    <option value="bill">Auto-Print Customer Bill Immediately</option>
-                    <option value="kot-and-bill">Auto-Print KOT + Customer Bill Together</option>
-                  </select>
-                </label>
-              </div>
-
-              {/* Tax & Backup Card */}
-              <div className="pos-data-card pos-settings-card">
-                <div className="pos-data-heading">
-                  <div>
-                    <h2>Tax Rates & Excel Sync</h2>
-                    <span>GST rates applied during billing calculation</span>
-                  </div>
-                  <BadgeIndianRupee size={21} />
-                </div>
-                <div className="pos-setting-toggle">
-                  <span>
-                    <b>Enable GST Calculation</b>
-                    <small>Calculate CGST + SGST tax automatically on sales.</small>
-                  </span>
-                  <button
-                    className={`pos-switch ${taxEnabled ? 'on' : ''}`}
-                    onClick={() => setTaxEnabled(!taxEnabled)}
-                    aria-label="Toggle GST"
-                  >
-                    <i />
-                  </button>
-                </div>
-                <label>
-                  Default GST Rate (%)
-                  <input
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="1"
-                    value={taxRate}
-                    onChange={e => setTaxRate(Math.max(0, Math.min(100, Number(e.target.value))))}
-                  />
-                </label>
-
-                <div className="pos-backup-block">
-                  <FileSpreadsheet size={21} />
-                  <div>
-                    <b>Connect Spreadsheets</b>
-                    <span>Export sales and products directly to Excel or Google Sheets.</span>
-                  </div>
-                  <button onClick={downloadSampleTemplate}>
-                    <Download size={14} /> Sample CSV
-                  </button>
-                </div>
-
-                <button className="pos-secondary-action pos-sheet-export" onClick={exportSales}>
-                  <FileSpreadsheet size={16} /> Export All Sales to Excel CSV
-                </button>
-
-                <div className="flex gap-2">
-                  <button className="pos-secondary-action flex-1" onClick={exportBackup}>
-                    <ArrowDownToLine size={15} /> Device Backup
-                  </button>
-                  <label className="pos-import-button flex-1 cursor-pointer">
-                    <ArrowUpFromLine size={15} /> Restore Backup
-                    <input type="file" accept="application/json,.json" onChange={e => importBackup(e.target.files?.[0])} />
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <label>
+                    Email
+                    <input type="email" value={shop.email || ''} onChange={e => setShop({ ...shop, email: e.target.value })} placeholder="billing@yourstore.in" />
+                  </label>
+                  <label>
+                    FSSAI licence <span className="pos-label-muted">(food business)</span>
+                    <input value={shop.fssai || ''} onChange={e => setShop({ ...shop, fssai: e.target.value.replace(/\D/g, '').slice(0, 14) })} placeholder="14-digit number" inputMode="numeric" />
                   </label>
                 </div>
+
+                <div className="pos-subheading">Invoice &amp; payment details</div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto]">
+                  <label>
+                    UPI ID <span className="pos-label-muted">(printed so customers can pay)</span>
+                    <input value={shop.upiId || ''} onChange={e => setShop({ ...shop, upiId: e.target.value.trim() })} placeholder="yourstore@okaxis" />
+                  </label>
+                  <label>
+                    Invoice colour
+                    <input type="color" className="pos-color-input" value={shop.brandColor || '#1d4ed8'} onChange={e => setShop({ ...shop, brandColor: e.target.value })} />
+                  </label>
+                </div>
+                <label>
+                  Bank details <span className="pos-label-muted">(A4 invoices)</span>
+                  <textarea rows={2} value={shop.bankDetails || ''} onChange={e => setShop({ ...shop, bankDetails: e.target.value })} placeholder={'Bank: State Bank of India · A/c 1234567890\nIFSC: SBIN0001234 · Branch: Anna Nagar'} />
+                </label>
+                <label>
+                  Terms &amp; conditions
+                  <textarea rows={2} value={shop.terms || ''} onChange={e => setShop({ ...shop, terms: e.target.value })} placeholder={'1. Goods once sold will not be taken back.\n2. Subject to local jurisdiction.'} />
+                </label>
+                <label>
+                  Thank-you line on bills
+                  <input value={shop.footerNote || ''} onChange={e => setShop({ ...shop, footerNote: e.target.value })} placeholder="Thank you! Please visit again." maxLength={90} />
+                </label>
               </div>
+
+              {/* Right Column: Tax & Backup + Machine Printing stacked evenly */}
+              <div className="flex flex-col gap-4 min-w-0">
+                {/* Tax & Backup Card */}
+                <div className="pos-data-card pos-settings-card">
+                  <div className="pos-data-heading">
+                    <div>
+                      <h2>Tax Rates & Excel Sync</h2>
+                      <span>GST rates applied during billing calculation</span>
+                    </div>
+                    <BadgeIndianRupee size={21} />
+                  </div>
+                  <div className="pos-setting-toggle">
+                    <span>
+                      <b>Enable GST Calculation</b>
+                      <small>Calculate CGST + SGST (or IGST) automatically on sales.</small>
+                    </span>
+                    <button
+                      className={`pos-switch ${taxEnabled ? 'on' : ''}`}
+                      onClick={() => setTaxEnabled(!taxEnabled)}
+                      aria-label="Toggle GST"
+                    >
+                      <i />
+                    </button>
+                  </div>
+                  <label>
+                    Default GST Rate (%)
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="1"
+                      value={taxRate}
+                      onChange={e => setTaxRate(Math.max(0, Math.min(100, Number(e.target.value))))}
+                    />
+                  </label>
+
+                  <div className="pos-backup-block">
+                    <FileSpreadsheet size={21} />
+                    <div>
+                      <b>Connect Spreadsheets</b>
+                      <span>Export sales and products directly to Excel or Google Sheets.</span>
+                    </div>
+                    <button onClick={downloadSampleTemplate}>
+                      <Download size={14} /> Sample CSV
+                    </button>
+                  </div>
+
+                  <button className="pos-secondary-action pos-sheet-export" onClick={exportSales}>
+                    <FileSpreadsheet size={16} /> Export All Sales to Excel CSV
+                  </button>
+
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <button type="button" className="pos-secondary-action w-full justify-center" onClick={() => void exportBackup()}>
+                      <ArrowDownToLine size={15} /> Device Backup
+                    </button>
+                    <label className="pos-secondary-action pos-import-button w-full justify-center cursor-pointer">
+                      <ArrowUpFromLine size={15} /> Restore Backup
+                      <input type="file" accept="application/json,.json" onChange={e => importBackup(e.target.files?.[0])} />
+                    </label>
+                  </div>
+                </div>
+
+                {/* Machine Printing & Invoice Templates Card */}
+                <div className="pos-data-card pos-settings-card">
+                  <div className="pos-data-heading">
+                    <div>
+                      <h2>Machine Printing &amp; Invoice Templates</h2>
+                      <span>Configure thermal machine width, extra GST invoice template, and auto-print</span>
+                    </div>
+                    <Printer size={21} />
+                  </div>
+                  <label>
+                    Default Bill / Invoice Template
+                    <select
+                      value={invoiceTemplate}
+                      onChange={e => setInvoiceTemplate(e.target.value as InvoiceTemplateId)}
+                    >
+                      <option value="thermal">Thermal POS Receipt (80mm / 58mm Machine)</option>
+                      <option value="classic-gst">Classic GST Tax Invoice (A4 Bordered)</option>
+                      <option value="modern-gst">Modern Branded GST Invoice (Extra A4 Template)</option>
+                    </select>
+                  </label>
+                  <label>
+                    Thermal Machine Paper Width
+                    <select
+                      value={paperWidth}
+                      onChange={e => setPaperWidth(e.target.value as ThermalPaperWidth)}
+                    >
+                      <option value="80mm">80mm Standard POS Thermal Roll</option>
+                      <option value="58mm">58mm Compact / Handheld Machine Roll</option>
+                    </select>
+                  </label>
+                  <label>
+                    After Completing Sale (Auto-Print)
+                    <select
+                      value={autoPrintOnComplete}
+                      onChange={e => setAutoPrintOnComplete(e.target.value as 'none' | 'bill' | 'kot-and-bill')}
+                    >
+                      <option value="none">Show Print &amp; KOT Popup (Recommended)</option>
+                      <option value="bill">Auto-Print Customer Bill Immediately</option>
+                      <option value="kot-and-bill">Auto-Print KOT + Customer Bill Together</option>
+                    </select>
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" className="pos-secondary-action" onClick={() => setShowTemplatePreview(v => !v)}>
+                      <FileText size={14} /> {showTemplatePreview ? 'Hide preview' : 'Preview this template'}
+                    </button>
+                    <button
+                      type="button"
+                      className="pos-secondary-action"
+                      onClick={() => {
+                        try {
+                          printInvoiceDocument(buildSampleSale(taxEnabled ? taxRate : 0, false), shop, { template: invoiceTemplate, paperWidth });
+                        } catch (error) {
+                          notify('error', 'Print window blocked', error instanceof Error ? error.message : 'Allow pop-ups and try again.');
+                        }
+                      }}
+                    >
+                      <Printer size={14} /> Test print
+                    </button>
+                    <button
+                      type="button"
+                      className="pos-secondary-action"
+                      onClick={() => {
+                        try {
+                          printKitchenOrderTicket(buildSampleSale(taxRate), { paperWidth, shopName: shop.name });
+                        } catch (error) {
+                          notify('error', 'Print window blocked', error instanceof Error ? error.message : 'Allow pop-ups and try again.');
+                        }
+                      }}
+                    >
+                      <Receipt size={14} /> Test KOT
+                    </button>
+                  </div>
+                  {showTemplatePreview && (
+                    <div className={`pos-template-preview ${invoiceTemplate === 'thermal' ? 'thermal' : 'a4'}`}>
+                      <iframe
+                        title="Invoice template preview"
+                        sandbox=""
+                        srcDoc={buildInvoiceHtml(buildSampleSale(taxEnabled ? taxRate : 0, false), shop, { template: invoiceTemplate, paperWidth, autoPrint: false })}
+                      />
+                      <small>Sample bill with your logo, GSTIN and settings. Real bills use the customer’s details.</small>
+                    </div>
+                  )}
+                </div>
+
+                {/* Offline Security & Counter PIN Lock Card */}
+                <div className="pos-data-card pos-settings-card">
+                  <div className="pos-data-heading">
+                    <div>
+                      <h2>Offline Vault &amp; Counter PIN Lock</h2>
+                      <span>Protect local bills, customer records &amp; counter terminal</span>
+                    </div>
+                    <ShieldCheck size={21} className="text-emerald-600" />
+                  </div>
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 text-xs text-emerald-900 space-y-1">
+                    <div className="flex items-center justify-between font-bold">
+                      <span className="flex items-center gap-1.5"><Lock size={13} /> Local Vault Encryption</span>
+                      <span className="rounded bg-emerald-100 px-2 py-0.5 text-[10px] text-emerald-800">
+                        {vaultEncrypted ? 'AES-GCM-256 + SHA-256' : 'Standard Storage'}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-emerald-800">
+                      All offline bills, stock, and customer records for this workspace are encrypted at rest on this device.
+                    </p>
+                  </div>
+                  <label>
+                    <span>Counter Lock PIN <span className="pos-label-muted">(4–6 digits)</span></span>
+                    <div className="flex gap-2">
+                      <input
+                        type="password"
+                        inputMode="numeric"
+                        maxLength={6}
+                        value={newPinInput}
+                        onChange={e => setNewPinInput(e.target.value.replace(/\D/g, ''))}
+                        placeholder={hasCounterPin ? 'Enter new 4–6 digit PIN' : 'Set 4–6 digit PIN'}
+                        className="flex-1"
+                      />
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (newPinInput.length < 4) {
+                            setToast('Enter at least 4 digits for the Counter PIN.');
+                            return;
+                          }
+                          await setOfflineCounterPin(activeTenantId, newPinInput);
+                          setHasCounterPin(true);
+                          setNewPinInput('');
+                          setToast('✓ Counter PIN saved securely on this device.');
+                          recordAudit('security.pin_set', 'Counter PIN lock set or changed');
+                        }}
+                        className="pos-primary-action"
+                      >
+                        <KeyRound size={14} /> {hasCounterPin ? 'Update PIN' : 'Enable PIN'}
+                      </button>
+                    </div>
+                  </label>
+                  {hasCounterPin && (
+                    <div className="flex items-center justify-between pt-1">
+                      <button
+                        type="button"
+                        onClick={() => { setPinInput(''); setPinError(''); setCounterLocked(true); }}
+                        className="pos-secondary-action"
+                      >
+                        <Lock size={14} /> Lock Counter Now
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await setOfflineCounterPin(activeTenantId, null);
+                          setHasCounterPin(false);
+                          setToast('Counter PIN lock disabled for this workspace.');
+                          recordAudit('security.pin_removed', 'Counter PIN lock turned off');
+                        }}
+                        className="text-xs font-semibold text-rose-600 hover:underline"
+                      >
+                        Remove PIN
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Sync status + audit trail */}
+            <div className="pos-data-card pos-audit-card">
+              <div className="pos-data-heading">
+                <div>
+                  <h2>Sync status &amp; audit trail</h2>
+                  <span>Every bill, sync, stock change and setting is recorded in a tamper-evident log, stored encrypted on this device</span>
+                </div>
+                <AuditShieldIllustration className="w-16 h-auto" />
+              </div>
+
+              <div className="pos-sync-states">
+                <div className={`pos-sync-state ${online ? 'ok' : 'warn'}`}>
+                  {online ? <Wifi size={18} /> : <WifiOff size={18} />}
+                  <div><b>{online ? 'Online' : 'Offline'}</b><span>{online ? 'Connected to the internet' : 'Billing continues on this device'}</span></div>
+                </div>
+                <div className={`pos-sync-state ${pendingCount ? 'warn' : 'ok'}`}>
+                  <CloudOff size={18} />
+                  <div><b>{pendingCount} waiting</b><span>{pendingCount ? 'Saved on device, not yet in cloud' : 'Nothing waiting to sync'}</span></div>
+                </div>
+                <div className="pos-sync-state ok">
+                  <Cloud size={18} />
+                  <div><b>{sales.filter(s => s.sync === 'synced').length} synced</b><span>{lastSyncedAt ? `Last sync ${new Date(lastSyncedAt).toLocaleString('en-IN')}` : 'No sync yet on this device'}</span></div>
+                </div>
+                {(() => {
+                  const chain = verifyAuditChain(auditLog);
+                  return (
+                    <div className={`pos-sync-state ${chain.ok ? 'ok' : 'bad'}`}>
+                      <ShieldCheck size={18} />
+                      <div><b>{chain.ok ? 'Log verified' : 'Log altered'}</b><span>{chain.ok ? `${chain.checked} entries, chain intact` : `Mismatch at entry ${(chain.brokenAt ?? 0) + 1}`}</span></div>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 px-5 pt-3">
+                <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Audit filter">
+                  {([['all', 'All'], ['sale', 'Bills'], ['sync', 'Sync & network'], ['stock', 'Stock & products'], ['settings', 'Settings & security']] as const).map(([id, label]) => (
+                    <button key={id} type="button" role="tab" aria-selected={auditFilter === id} onClick={() => setAuditFilter(id)} className={`pos-audit-filter ${auditFilter === id ? 'active' : ''}`}>{label}</button>
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <button type="button" className="pos-secondary-action" onClick={requestSync}><RefreshCw size={14} /> Sync now</button>
+                  <button
+                    type="button"
+                    className="pos-secondary-action"
+                    onClick={() => {
+                      const rows = [['Time', 'Action', 'Details', 'Reference', 'Amount (INR)', 'By', 'Hash'], ...auditLog.map(a => [new Date(a.at).toLocaleString('en-IN'), AUDIT_LABELS[a.action] || a.action, a.summary, a.ref || '', a.amount ?? '', a.actor, a.hash])];
+                      download(`ollaibooks-audit-${activeTenantId}-${new Date().toISOString().slice(0, 10)}.csv`, `﻿${rows.map(r => r.map(csvCell).join(',')).join('\n')}`, 'text/csv;charset=utf-8');
+                      notify('success', 'Audit log exported', 'Open it in Excel or share it with your accountant.');
+                    }}
+                    disabled={!auditLog.length}
+                  >
+                    <Download size={14} /> Export
+                  </button>
+                </div>
+              </div>
+
+              <ol className="pos-audit-list">
+                {(() => {
+                  const prefixes: Record<typeof auditFilter, string[]> = {
+                    all: [], sale: ['sale.'], sync: ['sync.', 'network.'], stock: ['stock.', 'product.'], settings: ['settings.', 'logo.', 'backup.', 'security.'],
+                  };
+                  const list = auditLog
+                    .filter(a => auditFilter === 'all' || prefixes[auditFilter].some(p => a.action.startsWith(p)))
+                    .slice(-60)
+                    .reverse();
+                  if (!list.length) {
+                    return <li className="pos-audit-empty">Nothing recorded here yet. Your next bill or change will show up instantly.</li>;
+                  }
+                  return list.map(a => (
+                    <li key={a.id} className={`pos-audit-item sev-${auditSeverity(a.action)}`}>
+                      <span className="pos-audit-dot" />
+                      <div className="pos-audit-main">
+                        <b>{AUDIT_LABELS[a.action] || a.action}</b>
+                        <span>{a.summary}</span>
+                      </div>
+                      <div className="pos-audit-meta">
+                        {typeof a.amount === 'number' && <b>{money(a.amount)}</b>}
+                        <span>{new Date(a.at).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                        <code title="Chain hash">#{a.hash}</code>
+                      </div>
+                    </li>
+                  ));
+                })()}
+              </ol>
             </div>
           </section>
         )}
@@ -2144,13 +3049,65 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
         {/* Global Footer */}
         <footer className="pos-footer">
           <span>
-            ollaiBooks Autonomous POS · {shop.name}
+            ollaiBooks POS · {shop.name}
           </span>
           <span>
-            <span className="pos-dot" /> Multi-Tenant Storage Active ({storageMode})
+            <span className={`pos-dot ${online ? '' : 'offline'}`} /> {online ? 'Online' : 'Offline'} · {storageMode === 'indexeddb' ? (vaultEncrypted ? 'Encrypted device vault' : 'Device database') : 'Browser storage'} · {pendingCount ? `${pendingCount} to sync` : 'All synced'}
           </span>
         </footer>
       </section>
+
+      {/* Counter PIN Lock Overlay */}
+      {counterLocked && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/85 p-4 backdrop-blur-md">
+          <form
+            onSubmit={async e => {
+              e.preventDefault();
+              const ok = await verifyOfflineCounterPin(activeTenantId, pinInput);
+              if (ok) {
+                setCounterLocked(false);
+                setPinInput('');
+                setPinError('');
+              } else {
+                setPinError('Incorrect PIN. Please try again.');
+              }
+            }}
+            className="w-full max-w-sm rounded-2xl border border-slate-800 bg-slate-900 p-6 text-white shadow-2xl"
+          >
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-blue-600/20 text-blue-400 border border-blue-500/30">
+              <Lock size={22} />
+            </div>
+            <h2 className="text-center text-lg font-extrabold">Counter Terminal Locked</h2>
+            <p className="mt-1 text-center text-xs text-slate-400">
+              Enter your 4–6 digit PIN to unlock <strong>{shop.name}</strong>
+            </p>
+            <input
+              type="password"
+              inputMode="numeric"
+              autoFocus
+              maxLength={6}
+              value={pinInput}
+              onChange={e => { setPinInput(e.target.value.replace(/\D/g, '')); setPinError(''); }}
+              placeholder="••••"
+              className="mt-5 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-center text-2xl font-bold tracking-[0.5em] text-white focus:border-blue-500 focus:outline-none"
+            />
+            {pinError && <p className="mt-2 text-center text-xs font-semibold text-rose-400">{pinError}</p>}
+            <button
+              type="submit"
+              className="mt-4 w-full rounded-xl bg-blue-600 py-3 text-sm font-bold text-white hover:bg-blue-700 transition"
+            >
+              Unlock Workspace
+            </button>
+            <button
+              type="button"
+              onClick={() => { clearPosSession(); router.replace('/login'); }}
+              className="mt-3 w-full py-1.5 text-center text-xs text-slate-400 hover:text-white"
+            >
+              Sign out workspace
+            </button>
+          </form>
+        </div>
+      )}
 
       {/* 2.0 Post-Sale Modal: KOT & Machine Bill Generation */}
       {completedSale && (
@@ -2350,9 +3307,9 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                   </div>
                   <button
                     onClick={triggerDirectInstall}
-                    className="rounded-lg bg-white px-4 py-2 text-xs font-bold text-blue-700 shadow hover:bg-blue-50 active:scale-95 transition-all whitespace-nowrap"
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-white px-4 py-2 text-xs font-bold text-blue-700 shadow hover:bg-blue-50 active:scale-95 transition-all whitespace-nowrap"
                   >
-                    ⚡ Install App Now
+                    <Sparkles size={14} /> Install App Now
                   </button>
                 </div>
               ) : installEnvironment === 'ios-browser' ? (
@@ -2607,20 +3564,33 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                 </label>
               </div>
 
-              {/* Quick Icon Selector */}
+              {/* Quick SVG Icon Selector */}
               <div>
-                <span className="block font-semibold text-slate-700 mb-1.5">Item Symbol</span>
-                <div className="flex gap-2">
-                  {['📦', '🏷️', '💻', '📱', '👕', '🛒', '⚡', '💼'].map(emoji => (
+                <span className="block font-semibold text-slate-700 mb-1.5">Item Icon</span>
+                <div className="flex flex-wrap gap-2">
+                  {([
+                    { key: 'icon:package', label: 'Package', Icon: Package },
+                    { key: 'icon:tag', label: 'Tag', Icon: Tag },
+                    { key: 'icon:laptop', label: 'Electronics', Icon: Laptop },
+                    { key: 'icon:phone', label: 'Mobile', Icon: Smartphone },
+                    { key: 'icon:shirt', label: 'Apparel', Icon: Shirt },
+                    { key: 'icon:bag', label: 'Retail', Icon: ShoppingBag },
+                    { key: 'icon:coffee', label: 'Cafe', Icon: Coffee },
+                    { key: 'icon:layers', label: 'Services', Icon: Layers },
+                  ] as const).map(({ key, label, Icon }) => (
                     <button
                       type="button"
-                      key={emoji}
-                      onClick={() => setNewProdEmoji(emoji)}
-                      className={`flex h-9 w-9 items-center justify-center rounded-lg border text-lg transition ${
-                        newProdEmoji === emoji ? 'border-blue-600 bg-blue-50' : 'border-slate-200 hover:bg-slate-50'
+                      key={key}
+                      title={label}
+                      aria-label={label}
+                      onClick={() => setNewProdEmoji(key)}
+                      className={`flex h-9 w-9 items-center justify-center rounded-lg border transition ${
+                        newProdEmoji === key
+                          ? 'border-blue-600 bg-blue-50 text-blue-700'
+                          : 'border-slate-200 text-slate-600 hover:bg-slate-50'
                       }`}
                     >
-                      {emoji}
+                      <Icon size={18} />
                     </button>
                   ))}
                 </div>
@@ -2773,15 +3743,7 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
       )}
 
       {/* Toast Notification */}
-      {toast && (
-        <div className="pos-toast">
-          <Check size={16} />
-          {toast}
-          <button onClick={() => setToast('')}>
-            <X size={15} />
-          </button>
-        </div>
-      )}
+      <ToastStack toasts={toasts} onDismiss={dismissToast} />
     </main>
   );
 }

@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InvoiceStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
+import { isInterstateSupply } from '../../common/gst-state.util';
 
 type ItemInput = {
   productId?: string;
@@ -65,12 +66,14 @@ export class InvoicesService {
     const profile = await this.prisma.businessProfile.findUnique({ where: { tenantId } });
     if (!profile) throw new BadRequestException('Business invoice settings are not configured');
     let customerState = profile.state;
+    let customerGstin: string | null = null;
     if (dto.customerId) {
       const customer = await this.prisma.customer.findFirst({ where: { id: dto.customerId, tenantId, isArchived: false } });
       if (!customer) throw new NotFoundException('Customer not found');
       customerState = customer.billingState || profile.state;
+      customerGstin = customer.gstin || null;
     }
-    const isInterstate = customerState.trim().toLocaleLowerCase() !== profile.state.trim().toLocaleLowerCase();
+    const isInterstate = isInterstateSupply(profile.state, profile.gstin, customerState, customerGstin);
 
     try {
       return await this.prisma.$transaction(async (tx) => {
@@ -131,12 +134,14 @@ export class InvoicesService {
     const profile = await this.prisma.businessProfile.findUnique({ where: { tenantId } });
     if (!profile) throw new BadRequestException('Business invoice settings are not configured');
     let customerState = profile.state;
+    let customerGstin: string | null = null;
     if (dto.customerId) {
       const customer = await this.prisma.customer.findFirst({ where: { id: dto.customerId, tenantId, isArchived: false } });
       if (!customer) throw new NotFoundException('Customer not found');
       customerState = customer.billingState || profile.state;
+      customerGstin = customer.gstin || null;
     }
-    const isInterstate = customerState.trim().toLocaleLowerCase() !== profile.state.trim().toLocaleLowerCase();
+    const isInterstate = isInterstateSupply(profile.state, profile.gstin, customerState, customerGstin);
     return this.prisma.$transaction(async (tx) => {
       const lineItems = await this.calculateItems(tx, tenantId, dto.items, decimal(dto.discountTotal), isInterstate);
       const shipping = cents(decimal(dto.shipping));

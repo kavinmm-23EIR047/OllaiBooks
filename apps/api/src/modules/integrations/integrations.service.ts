@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { createCipheriv, createDecipheriv, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../database/prisma.service';
+import { isInterstateSupply } from '../../common/gst-state.util';
 
 const roundMoney = (value: Prisma.Decimal) => value.toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
 const amount = (value: string | number | Prisma.Decimal | undefined) => new Prisma.Decimal(String(value ?? 0));
@@ -130,7 +131,7 @@ export class IntegrationsService {
         }
         const customerState = payload.customer.state || customer.billingState || '';
         if (!customerState) throw new BadRequestException('Customer billing state is required to calculate invoice tax');
-        const isInterstate = customerState.trim().toLocaleLowerCase() !== profile.state.trim().toLocaleLowerCase();
+        const isInterstate = isInterstateSupply(profile.state, profile.gstin, customerState, customer.gstin);
 
         const order = await tx.order.create({
           data: {

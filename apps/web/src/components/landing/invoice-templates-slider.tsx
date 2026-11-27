@@ -90,7 +90,7 @@ const TEMPLATES: InvoiceTemplateConfig[] = [
       pan: 'AAAAA0000A',
       address: '104 Tech Hub, Anna Salai, Chennai, Tamil Nadu 600002',
       phone: '+91 98765 43210',
-      email: 'finance@billpilot.ai',
+      email: 'finance@ollaibooks.in',
     },
     buyer: {
       name: 'TechNova Solutions Ltd',
@@ -528,7 +528,7 @@ export function InvoiceTemplatesSlider() {
               amount={grandTotal.toLocaleString('en-IN')}
               invoiceNumber={current.invoiceNo}
               payeeName={current.seller.name}
-              upiId="billpilot.settle@icici"
+              upiId="ollaibooks.settle@icici"
               size="lg"
             />
 

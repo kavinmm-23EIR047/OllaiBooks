@@ -6,6 +6,11 @@ import {
   Param,
   Post,
   Patch,
+  Delete,
+  Ip,
+  Query,
+  HttpException,
+  HttpStatus,
   UnauthorizedException,
   ForbiddenException,
   NotFoundException,
@@ -17,11 +22,12 @@ import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../database/prisma.service';
 import { z } from 'zod';
 import { ZodValidationPipe } from '../../common/zod-validation.pipe';
+import { PasswordSchema } from '../../common/password.policy';
 
 const CreateCustomerSchema = z.object({
   businessName: z.string().trim().min(2).max(160),
   email: z.string().trim().email().max(254),
-  password: z.string().min(12).max(200),
+  password: PasswordSchema,
   firstName: z.string().trim().min(1).max(80),
   lastName: z.string().trim().min(1).max(80),
   phone: z.string().trim().max(40).optional(),
@@ -35,11 +41,33 @@ const UpdateSubscriptionSchema = z.object({
 }).strict();
 const UpdateLoginSchema = z.object({
   email: z.string().trim().email().max(254).optional(),
-  password: z.string().min(12).max(200).optional(),
+  password: PasswordSchema.optional(),
   firstName: z.string().trim().min(1).max(80).optional(),
   lastName: z.string().trim().min(1).max(80).optional(),
   phone: z.string().trim().max(40).optional(),
 }).strict().refine((value) => Object.values(value).some((item) => item !== undefined), 'Provide at least one login field to update');
+
+const UpdateMemberSchema = z.object({
+  email: z.string().trim().email().max(254).optional(),
+  password: PasswordSchema.optional(),
+  firstName: z.string().trim().min(1).max(80).optional(),
+  lastName: z.string().trim().min(1).max(80).optional(),
+  phone: z.string().trim().max(40).optional(),
+  isActive: z.boolean().optional(),
+}).strict();
+
+const SEMVER = /^\d+\.\d+\.\d+$/;
+const ReleaseSchema = z.object({
+  platform: z.enum(['windows', 'android', 'mac', 'linux', 'web']),
+  version: z.string().trim().regex(SEMVER, 'Use a version like 1.2.0'),
+  minSupported: z.string().trim().regex(SEMVER, 'Use a version like 1.0.0').optional(),
+  downloadUrl: z.string().trim().url().max(500).optional(),
+  sizeMb: z.number().min(0).max(5000).optional(),
+  notes: z.string().trim().max(4000).optional(),
+  mandatory: z.boolean().optional(),
+  isPublished: z.boolean().optional(),
+}).strict();
+const ReleaseUpdateSchema = ReleaseSchema.partial().strict();
 
 @Controller('api/v1/admin-bridge')
 export class AdminBridgeController {
@@ -48,6 +76,58 @@ export class AdminBridgeController {
     private readonly config: ConfigService,
     private readonly jwt: JwtService,
   ) {}
+
+  /* ---------------- Admin console login (credentials live in apps/api/.env) ---------------- */
+
+  private static readonly failedLogins = new Map<string, { count: number; until: number }>();
+
+  private adminId() {
+    return (this.config.get<string>('ADMIN_ID') || '').trim();
+  }
+
+  private adminSecret() {
+    return `${this.config.getOrThrow<string>('JWT_SECRET')}::ollaibooks-admin-console`;
+  }
+
+  private safeEqual(a: string, b: string) {
+    const ha = createHash('sha256').update(a).digest();
+    const hb = createHash('sha256').update(b).digest();
+    return timingSafeEqual(ha, hb);
+  }
+
+  @Post('login')
+  async adminLogin(
+    @Body(new ZodValidationPipe(z.object({ adminId: z.string().trim().min(1).max(120), password: z.string().min(1).max(200) }).strict())) body: { adminId: string; password: string },
+    @Ip() ip: string,
+  ) {
+    const key = ip || 'unknown';
+    const state = AdminBridgeController.failedLogins.get(key);
+    if (state && state.until > Date.now()) {
+      throw new HttpException(`Too many attempts. Try again in ${Math.ceil((state.until - Date.now()) / 60000)} minute(s).`, HttpStatus.TOO_MANY_REQUESTS);
+    }
+    const expectedId = this.adminId();
+    const expectedPassword = this.config.get<string>('ADMIN_PASSWORD') || '';
+    if (!expectedId || expectedPassword.length < 8) {
+      throw new ForbiddenException('Admin login is not configured. Set ADMIN_ID and ADMIN_PASSWORD (8+ characters) in apps/api/.env');
+    }
+    const ok = this.safeEqual(body.adminId, expectedId) && this.safeEqual(body.password, expectedPassword);
+    if (!ok) {
+      const lockExpired = Boolean(state && state.until !== 0 && state.until <= Date.now());
+      const count = (lockExpired ? 0 : state?.count || 0) + 1;
+      AdminBridgeController.failedLogins.set(key, { count, until: count >= 5 ? Date.now() + 15 * 60_000 : 0 });
+      throw new UnauthorizedException('Admin ID or password is incorrect');
+    }
+    AdminBridgeController.failedLogins.delete(key);
+    const expiresInHours = 8;
+    const token = this.jwt.sign({ sub: expectedId, typ: 'admin-console' }, { secret: this.adminSecret(), expiresIn: `${expiresInHours}h` });
+    return { token, adminId: expectedId, expiresAt: new Date(Date.now() + expiresInHours * 3600_000).toISOString() };
+  }
+
+  @Get('session')
+  async adminSession(@Headers('x-ak-admin-key') providedKey?: string, @Headers('authorization') authHeader?: string) {
+    await this.verifyAdminAccess(providedKey, authHeader);
+    return { ok: true, adminId: this.adminId() || 'platform-admin', serverTime: new Date().toISOString() };
+  }
 
   private async verifyAdminAccess(providedKey?: string, authHeader?: string): Promise<boolean> {
     // 1. Check Service Key
@@ -60,8 +140,15 @@ export class AdminBridgeController {
 
     // 2. Check JWT Bearer token for platform admin
     if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.slice(7).trim();
+      // 2a. Admin-console session (ADMIN_ID / ADMIN_PASSWORD from .env), signed with a separate secret
       try {
-        const token = authHeader.slice(7).trim();
+        const adminPayload = this.jwt.verify(token, { secret: this.adminSecret() });
+        if (adminPayload?.typ === 'admin-console' && adminPayload?.sub === this.adminId()) return true;
+      } catch {
+        // not an admin-console token
+      }
+      try {
         const payload = this.jwt.verify(token);
         if (payload?.sub) {
           const user = await this.prisma.user.findUnique({
@@ -164,8 +251,8 @@ export class AdminBridgeController {
     const firstName = body.firstName?.trim();
     const lastName = body.lastName?.trim();
     const password = body.password;
-    if (!businessName || !email || !firstName || !lastName || !password || password.length < 12 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      throw new ForbiddenException('Business, valid email, customer name, and a password of at least 12 characters are required');
+    if (!businessName || !email || !firstName || !lastName || !password || password.length < 8 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new ForbiddenException('Business, valid email, customer name, and a password of at least 8 characters are required');
     }
     if (await this.prisma.user.findUnique({ where: { email }, select: { id: true } })) {
       throw new ForbiddenException('That email already has an account');
@@ -307,5 +394,183 @@ export class AdminBridgeController {
       tenant,
       message: `Tenant workspace ${tenant.name} provisioned successfully`,
     };
+  }
+
+  /* ---------------- Members: who uses ollaiBooks online / offline ---------------- */
+
+  @Get('members')
+  async members(@Headers('x-ak-admin-key') providedKey?: string, @Headers('authorization') authHeader?: string) {
+    await this.verifyAdminAccess(providedKey, authHeader);
+    const [users, offlineByTenant, crmByTenant] = await Promise.all([
+      this.prisma.user.findMany({
+        orderBy: { createdAt: 'desc' },
+        take: 500,
+        select: {
+          id: true, email: true, firstName: true, lastName: true, phone: true, isActive: true, isPlatformAdmin: true,
+          lastLoginAt: true, lastLoginMode: true, createdAt: true,
+          tenantMemberships: {
+            select: {
+              role: true, isActive: true,
+              tenant: {
+                select: {
+                  id: true, name: true, isSuspended: true,
+                  subscriptions: { take: 1, orderBy: { createdAt: 'desc' }, select: { status: true, currentPeriodEnd: true, plan: { select: { code: true, name: true } } } },
+                },
+              },
+            },
+          },
+        },
+      }),
+      this.prisma.offlinePosSale.groupBy({ by: ['tenantId'], _max: { syncedAt: true }, _count: { _all: true } }),
+      this.prisma.crmRecord.groupBy({ by: ['tenantId'], _max: { updatedAt: true }, _count: { _all: true } }),
+    ]);
+    const offline = new Map(offlineByTenant.map((r) => [r.tenantId, { lastSyncAt: r._max.syncedAt, bills: r._count._all }]));
+    const crmMap = new Map(crmByTenant.map((r) => [r.tenantId, { lastSyncAt: r._max.updatedAt, records: r._count._all }]));
+    return {
+      generatedAt: new Date().toISOString(),
+      members: users.map(({ tenantMemberships, ...u }) => {
+        const tenants = tenantMemberships.map((m) => ({
+          id: m.tenant.id, name: m.tenant.name, role: m.role, memberActive: m.isActive, suspended: m.tenant.isSuspended,
+          subscription: m.tenant.subscriptions[0] || null,
+          offline: offline.get(m.tenant.id) || { lastSyncAt: null, bills: 0 },
+          crm: crmMap.get(m.tenant.id) || { lastSyncAt: null, records: 0 },
+        }));
+        const syncTimes = tenants.map((t) => t.offline.lastSyncAt).filter((d): d is Date => Boolean(d)).sort((a, b) => a.getTime() - b.getTime());
+        return { ...u, tenants, lastOfflineSyncAt: syncTimes.pop() || null, usesOfflineApp: tenants.some((t) => t.offline.bills > 0) };
+      }),
+    };
+  }
+
+  @Patch('users/:id')
+  async updateUser(
+    @Param('id') userId: string,
+    @Body(new ZodValidationPipe(UpdateMemberSchema)) body: z.infer<typeof UpdateMemberSchema>,
+    @Headers('x-ak-admin-key') providedKey?: string,
+    @Headers('authorization') authHeader?: string,
+  ) {
+    await this.verifyAdminAccess(providedKey, authHeader);
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true, email: true } });
+    if (!user) throw new NotFoundException('Member not found');
+    const nextEmail = body.email?.toLowerCase();
+    if (nextEmail && nextEmail !== user.email && await this.prisma.user.findUnique({ where: { email: nextEmail }, select: { id: true } })) {
+      throw new ForbiddenException('That email already has an account');
+    }
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        ...(nextEmail ? { email: nextEmail } : {}),
+        ...(body.password ? { passwordHash: await bcrypt.hash(body.password, 12) } : {}),
+        ...(body.firstName ? { firstName: body.firstName } : {}),
+        ...(body.lastName ? { lastName: body.lastName } : {}),
+        ...(body.phone !== undefined ? { phone: body.phone || null } : {}),
+        ...(typeof body.isActive === 'boolean' ? { isActive: body.isActive } : {}),
+      },
+      select: { id: true, email: true, isActive: true },
+    });
+    return {
+      success: true,
+      member: updated,
+      message: body.password ? 'Password reset. The member must sign in online once so the offline app picks up the new password.' : 'Member updated.',
+    };
+  }
+
+  /* ---------------- Version control: app releases ---------------- */
+
+  @Get('releases')
+  async listReleases(@Headers('x-ak-admin-key') providedKey?: string, @Headers('authorization') authHeader?: string) {
+    await this.verifyAdminAccess(providedKey, authHeader);
+    return { releases: await this.prisma.appRelease.findMany({ orderBy: [{ platform: 'asc' }, { createdAt: 'desc' }], take: 200 }) };
+  }
+
+  @Post('releases')
+  async createRelease(
+    @Body(new ZodValidationPipe(ReleaseSchema)) body: z.infer<typeof ReleaseSchema>,
+    @Headers('x-ak-admin-key') providedKey?: string,
+    @Headers('authorization') authHeader?: string,
+  ) {
+    await this.verifyAdminAccess(providedKey, authHeader);
+    const exists = await this.prisma.appRelease.findUnique({ where: { platform_version: { platform: body.platform, version: body.version } } });
+    if (exists) throw new ForbiddenException(`Version ${body.version} already exists for ${body.platform}`);
+    return { success: true, release: await this.prisma.appRelease.create({ data: body as { platform: string; version: string } }) };
+  }
+
+  @Patch('releases/:id')
+  async updateRelease(
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(ReleaseUpdateSchema)) body: z.infer<typeof ReleaseUpdateSchema>,
+    @Headers('x-ak-admin-key') providedKey?: string,
+    @Headers('authorization') authHeader?: string,
+  ) {
+    await this.verifyAdminAccess(providedKey, authHeader);
+    return { success: true, release: await this.prisma.appRelease.update({ where: { id }, data: body }) };
+  }
+
+  @Delete('releases/:id')
+  async deleteRelease(@Param('id') id: string, @Headers('x-ak-admin-key') providedKey?: string, @Headers('authorization') authHeader?: string) {
+    await this.verifyAdminAccess(providedKey, authHeader);
+    await this.prisma.appRelease.delete({ where: { id } });
+    return { success: true };
+  }
+
+  /* ---------------- Backups ---------------- */
+
+  @Get('backups/summary')
+  async backupSummary(@Headers('x-ak-admin-key') providedKey?: string, @Headers('authorization') authHeader?: string) {
+    await this.verifyAdminAccess(providedKey, authHeader);
+    const tenants = await this.prisma.tenant.findMany({
+      orderBy: { name: 'asc' },
+      take: 500,
+      select: { id: true, name: true, _count: { select: { customers: true, products: true, invoices: true, orders: true, payments: true, offlinePosSales: true, crmRecords: true } } },
+    });
+    return { generatedAt: new Date().toISOString(), tenants };
+  }
+
+  @Get('tenants/:id/backup')
+  async tenantBackup(
+    @Param('id') tenantId: string,
+    @Headers('x-ak-admin-key') providedKey?: string,
+    @Headers('authorization') authHeader?: string,
+  ) {
+    await this.verifyAdminAccess(providedKey, authHeader);
+    const tenant = await this.prisma.tenant.findUnique({ where: { id: tenantId }, include: { businessProfile: true } });
+    if (!tenant) throw new NotFoundException('Workspace not found');
+    const take = 20000;
+    const [customers, products, invoices, payments, orders, offlinePosSales, crmRecords, subscriptions] = await Promise.all([
+      this.prisma.customer.findMany({ where: { tenantId }, take }),
+      this.prisma.product.findMany({ where: { tenantId }, take }),
+      this.prisma.invoice.findMany({ where: { tenantId }, take, include: { items: true } }),
+      this.prisma.payment.findMany({ where: { tenantId }, take }),
+      this.prisma.order.findMany({ where: { tenantId }, take, include: { items: true } }),
+      this.prisma.offlinePosSale.findMany({ where: { tenantId }, take }),
+      this.prisma.crmRecord.findMany({ where: { tenantId }, take }),
+      this.prisma.tenantSubscription.findMany({ where: { tenantId }, include: { plan: true } }),
+    ]);
+    return {
+      format: 'ollaibooks-backup',
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      tenant: { id: tenant.id, name: tenant.name, slug: tenant.slug, businessProfile: tenant.businessProfile },
+      counts: {
+        customers: customers.length, products: products.length, invoices: invoices.length, payments: payments.length,
+        orders: orders.length, offlinePosSales: offlinePosSales.length, crmRecords: crmRecords.length,
+      },
+      data: { customers, products, invoices, payments, orders, offlinePosSales, crmRecords, subscriptions },
+    };
+  }
+}
+
+/** Public, read-only: installed apps ask "is there a newer version?" (no customer data). */
+@Controller('api/v1/app-releases')
+export class AppReleasesController {
+  constructor(private readonly prisma: PrismaService) {}
+
+  @Get('latest')
+  async latest(@Query('platform') platform = 'windows') {
+    const release = await this.prisma.appRelease.findFirst({
+      where: { platform: String(platform).slice(0, 20), isPublished: true },
+      orderBy: { createdAt: 'desc' },
+      select: { platform: true, version: true, minSupported: true, downloadUrl: true, sizeMb: true, notes: true, mandatory: true, createdAt: true },
+    });
+    return { release };
   }
 }
