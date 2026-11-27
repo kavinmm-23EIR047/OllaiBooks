@@ -1,0 +1,21 @@
+// Keep generated Capacitor Android builds on the Kotlin stdlib version used by
+// the Android toolchain, and omit the legacy split jars whose classes are now
+// included in kotlin-stdlib.
+allprojects {
+    configurations.configureEach {
+        resolutionStrategy.eachDependency { details ->
+            if (details.requested.group == 'org.jetbrains.kotlin' &&
+                    details.requested.name in [
+                            'kotlin-stdlib',
+                            'kotlin-stdlib-jdk7',
+                            'kotlin-stdlib-jdk8'
+                    ]) {
+                details.useVersion '1.8.22'
+                details.because 'Align Kotlin stdlib artifacts to prevent duplicate classes'
+            }
+        }
+
+        exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk7'
+        exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk8'
+    }
+}
