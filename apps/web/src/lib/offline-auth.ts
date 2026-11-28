@@ -1,12 +1,38 @@
 type Workspace = { tenantId: string; tenantName: string; tenantSlug: string; subscriptionEndsAt?: string };
 type OfflineIdentity = { version: 2; email: string; salt: string; verifier: string; workspace: Workspace; user: { id: string; email: string; firstName: string; lastName: string }; expiresAt: number };
+type ActiveDeviceLease = {
+  version: 1;
+  email: string;
+  user: OfflineIdentity['user'];
+  workspace: Workspace;
+  expiresAt: number;
+  lastSeenAt: number;
+};
 
-// Keep this storage key stable so existing device data is preserved. Old entries
-// are replaced after the next successful online sign-in without a license key.
+// Keep this storage key stable so existing device data is preserved.
 const STORE = 'billdesk:offline-identities:v1';
+const ACTIVE_LEASE_KEY = 'ollaibooks:active-device-lease:v1';
 const SESSION_FLAG = 'billdesk_pos_auth';
 const ITERATIONS = 310000;
-const OFFLINE_LEASE_MS = 7 * 24 * 60 * 60 * 1000;
+const CLOCK_SKEW_TOLERANCE_MS = 5 * 60 * 1000;
+
+function readActiveLease(): ActiveDeviceLease | null {
+  try {
+    const raw = JSON.parse(localStorage.getItem(ACTIVE_LEASE_KEY) || 'null');
+    if (!raw || raw.version !== 1 || !raw.workspace?.tenantId || !Number.isFinite(raw.expiresAt)) return null;
+    return raw as ActiveDeviceLease;
+  } catch {
+    return null;
+  }
+}
+
+function writeActiveLease(lease: ActiveDeviceLease) {
+  try {
+    localStorage.setItem(ACTIVE_LEASE_KEY, JSON.stringify(lease));
+  } catch {
+    /* ignore storage quota errors */
+  }
+}
 
 function bytesToHex(bytes: Uint8Array) {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
@@ -38,11 +64,19 @@ export async function rememberOfflineIdentity(input: {
   const identity: OfflineIdentity = {
     version: 2,
     email: input.email.trim().toLowerCase(), salt: bytesToHex(salt), verifier,
-    workspace: input.workspace, user: input.user, expiresAt: Math.min(now + OFFLINE_LEASE_MS, subscriptionEnd),
+    workspace: input.workspace, user: input.user, expiresAt: subscriptionEnd,
   };
   const identities = readIdentities().filter((item) => !(item.email === identity.email && item.workspace.tenantId === identity.workspace.tenantId));
   identities.push(identity);
   try { localStorage.setItem(STORE, JSON.stringify(identities)); } catch { /* Online sign-in remains usable if this device cannot cache offline access. */ }
+  writeActiveLease({
+    version: 1,
+    email: identity.email,
+    user: identity.user,
+    workspace: identity.workspace,
+    expiresAt: subscriptionEnd,
+    lastSeenAt: now,
+  });
 }
 
 export async function loginOffline(emailInput: string, password: string) {
@@ -98,4 +132,66 @@ export function clearPosSession() {
   sessionStorage.removeItem('billpilot_workspaces');
   sessionStorage.removeItem('billpilot_active_tenant_id');
   sessionStorage.removeItem('ollaibooks_account');
+}
+
+/** Revokes the saved one-time device activation (used on explicit Sign Out or Admin Stop/Reset). */
+export function revokeDeviceLease() {
+  try {
+    localStorage.removeItem(ACTIVE_LEASE_KEY);
+    localStorage.removeItem(STORE);
+  } catch {
+    /* ignore */
+  }
+  clearPosSession();
+}
+
+/**
+ * Restores a previously activated offline POS session automatically on app reopen,
+ * valid until the Admin-configured subscriptionEndsAt date (with clock-rollback protection).
+ */
+export function tryAutoRestorePosSession(): boolean {
+  if (typeof window === 'undefined') return false;
+  if (hasPosSession()) return true;
+  const lease = readActiveLease();
+  if (!lease) return false;
+  const now = Date.now();
+  if (now + CLOCK_SKEW_TOLERANCE_MS < lease.lastSeenAt) {
+    // Device clock moved backward — require online verification.
+    return false;
+  }
+  if (lease.expiresAt <= now) {
+    return false;
+  }
+  writeActiveLease({ ...lease, lastSeenAt: Math.max(lease.lastSeenAt, now) });
+  sessionStorage.setItem('billpilot_workspaces', JSON.stringify([lease.workspace]));
+  sessionStorage.setItem('billpilot_active_tenant_id', lease.workspace.tenantId);
+  sessionStorage.setItem(SESSION_FLAG, 'offline');
+  sessionStorage.setItem('billdesk_pos_offline_expires_at', String(lease.expiresAt));
+  sessionStorage.setItem('ollaibooks_account', JSON.stringify({
+    email: lease.user?.email || lease.email,
+    name: [lease.user?.firstName, lease.user?.lastName].filter(Boolean).join(' '),
+    mode: 'offline',
+  }));
+  return true;
+}
+
+/** Syncs an updated subscription end date from the server into the active device lease. */
+export function refreshDeviceLeaseSubscription(subscriptionEndsAt?: string) {
+  const lease = readActiveLease();
+  if (!lease || !subscriptionEndsAt) return;
+  const nextEnd = new Date(subscriptionEndsAt).getTime();
+  if (!Number.isFinite(nextEnd)) return;
+  if (nextEnd <= Date.now()) {
+    revokeDeviceLease();
+    return;
+  }
+  writeActiveLease({
+    ...lease,
+    workspace: { ...lease.workspace, subscriptionEndsAt },
+    expiresAt: nextEnd,
+    lastSeenAt: Math.max(lease.lastSeenAt, Date.now()),
+  });
+  if (sessionStorage.getItem(SESSION_FLAG) === 'offline') {
+    sessionStorage.setItem('billdesk_pos_offline_expires_at', String(nextEnd));
+  }
 }

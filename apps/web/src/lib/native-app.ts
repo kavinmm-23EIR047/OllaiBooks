@@ -28,7 +28,49 @@ export interface DesktopBridge {
 declare global {
   interface Window {
     electronAPI?: DesktopBridge;
-    Capacitor?: { isNativePlatform?: () => boolean; getPlatform?: () => string };
+    Capacitor?: {
+      isNativePlatform?: () => boolean;
+      getPlatform?: () => string;
+      Plugins?: {
+        Filesystem?: {
+          writeFile: (opts: { path: string; data: string; directory: string; encoding?: string; recursive?: boolean }) => Promise<{ uri?: string }>;
+        };
+      };
+    };
+  }
+}
+
+function safeSegment(value: string | undefined, fallback: string) {
+  const cleaned = String(value || '').replace(/[^a-zA-Z0-9 _.()-]/g, '').replace(/\s+/g, ' ').trim().replace(/^\.+/, '').slice(0, 60);
+  return cleaned || fallback;
+}
+
+export async function saveMobileDocumentFile(input: {
+  business?: string;
+  folder: 'Invoices' | 'Backups';
+  subPath?: string;
+  fileName: string;
+  data: string;
+}): Promise<{ ok: boolean; path?: string; error?: string }> {
+  if (typeof window === 'undefined' || !isAndroidApp()) return { ok: false, error: 'Not a mobile app' };
+  const fs = window.Capacitor?.Plugins?.Filesystem;
+  if (!fs || typeof fs.writeFile !== 'function') {
+    return { ok: false, error: 'Capacitor Filesystem plugin not available in this build.' };
+  }
+  const relPath = ['ollaiBooks', safeSegment(input.business, 'My Business'), input.folder, input.subPath, safeSegment(input.fileName, 'file')]
+    .filter(Boolean)
+    .join('/');
+  try {
+    await fs.writeFile({
+      path: relPath,
+      data: input.data,
+      directory: 'DOCUMENTS',
+      encoding: 'utf8',
+      recursive: true,
+    });
+    return { ok: true, path: `Documents/${relPath}` };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Could not write to Documents folder.' };
   }
 }
 

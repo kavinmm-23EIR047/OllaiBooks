@@ -13,7 +13,13 @@ import {
   ExternalLink, Copy, Monitor, Share2, Lock, KeyRound, Palette
 } from 'lucide-react';
 import { ApiClient } from '@/lib/api-client';
-import { clearPosSession, getPosSessionMode } from '@/lib/offline-auth';
+import {
+  clearPosSession,
+  getPosSessionMode,
+  tryAutoRestorePosSession,
+  revokeDeviceLease,
+  refreshDeviceLeaseSubscription,
+} from '@/lib/offline-auth';
 import {
   loadOfflinePosData,
   requestPersistentStorage,
@@ -40,7 +46,7 @@ import { buildInvoiceHtml, buildSampleSale, type GstRegistrationType } from '@/l
 import { INDIAN_GST_STATES, detectGstState, isInterstateGst } from '@/lib/gst-utils';
 import { appendAudit, verifyAuditChain, auditSeverity, AUDIT_LABELS, type AuditEntry, type AuditAction } from '@/lib/audit-trail';
 import { useToasts, ToastStack } from '@/components/ui/pos-toast';
-import { getDesktopBridge, isNativeApp, nativePlatformLabel, SUPPORT, type DesktopPaths } from '@/lib/native-app';
+import { getDesktopBridge, isAndroidApp, isNativeApp, nativePlatformLabel, saveMobileDocumentFile, SUPPORT, type DesktopPaths } from '@/lib/native-app';
 import { DownloadAppGate } from '@/components/native/download-app-gate';
 import {
   OfflineCounterIllustration, SyncCloudIllustration, EmptyCartIllustration,
@@ -551,7 +557,10 @@ function OfflinePosApp() {
       // Keep defaults
     }
 
-    const mode = getPosSessionMode();
+    let mode: 'offline' | 'online' | null = getPosSessionMode();
+    if (!mode && tryAutoRestorePosSession()) {
+      mode = getPosSessionMode();
+    }
     setPosSessionMode(mode);
     if (!mode) {
       router.replace('/login?next=%2Foffline-pos');
@@ -561,16 +570,25 @@ function OfflinePosApp() {
       setAuthReady(true);
     } else {
       if (!navigator.onLine) {
-        clearPosSession();
-        router.replace('/login?next=%2Foffline-pos');
-        return;
-      }
-      ApiClient.get('/auth/me')
-        .then(() => setAuthReady(true))
-        .catch(() => {
+        if (tryAutoRestorePosSession()) {
+          setPosSessionMode('offline');
+          setAuthReady(true);
+        } else {
           clearPosSession();
           router.replace('/login?next=%2Foffline-pos');
-        });
+          return;
+        }
+      } else {
+        ApiClient.get<any>('/auth/me')
+          .then((me) => {
+            refreshDeviceLeaseSubscription(me?.tenant?.subscriptionEndsAt);
+            setAuthReady(true);
+          })
+          .catch(() => {
+            revokeDeviceLease();
+            router.replace('/login?next=%2Foffline-pos');
+          });
+      }
     }
 
     const checkConnectivity = async () => {
@@ -1515,16 +1533,48 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
       });
       return;
     }
+    if (isAndroidApp()) {
+      const mobileRes = await saveMobileDocumentFile({
+        business: shop.name,
+        folder: 'Backups',
+        fileName: `${backupFileName()}.json`,
+        data: backupJson(),
+      });
+      if (mobileRes.ok) {
+        setLastBackupAt(at);
+        recordAudit('backup.exported', `${options?.silent ? 'Automatic' : 'Manual'} mobile backup saved (${sales.length} bills)`);
+        notify('success', 'Backup saved on phone', mobileRes.path);
+        return;
+      }
+    }
     download(`${backupFileName()}.json`, backupJson(), 'application/json');
     setLastBackupAt(at);
     notify('success', 'Backup downloaded', 'Keep this file somewhere safe — a pen drive or Google Drive works well.');
     recordAudit('backup.exported', `Backup exported (${sales.length} bills, ${products.length} products)`);
   };
 
-  /** Desktop app: save every invoice as a PDF in Documents/ollaiBooks/<Business>/Invoices/YYYY/MM-Mon. */
+  /** Desktop & Mobile app: save every invoice in Documents/ollaiBooks/<Business>/Invoices/YYYY/MM-Mon. */
   const saveInvoiceToLaptop = async (sale: Sale, options?: { announce?: boolean }) => {
     const bridge = getDesktopBridge();
-    if (!bridge) return;
+    if (!bridge) {
+      if (isAndroidApp()) {
+        const html = buildInvoiceHtml(sale, shop, { template: 'classic-gst', autoPrint: false });
+        const when = new Date(sale.date);
+        const months = ['01-Jan', '02-Feb', '03-Mar', '04-Apr', '05-May', '06-Jun', '07-Jul', '08-Aug', '09-Sep', '10-Oct', '11-Nov', '12-Dec'];
+        const mobileRes = await saveMobileDocumentFile({
+          business: shop.name,
+          folder: 'Invoices',
+          subPath: `${when.getFullYear()}/${months[when.getMonth()]}`,
+          fileName: `${sale.number}.html`,
+          data: html,
+        });
+        if (mobileRes.ok && mobileRes.path) {
+          setSales(current => current.map(s => (s.id === sale.id ? { ...s, filePath: mobileRes.path } : s)));
+          if (options?.announce) notify('success', 'Invoice saved on phone', mobileRes.path);
+        }
+      }
+      return;
+    }
     const html = buildInvoiceHtml(sale, shop, { template: 'classic-gst', autoPrint: false });
     const result = await bridge.saveInvoiceFile({ html, fileName: sale.number, business: shop.name, date: sale.date });
     if (!result.ok || !result.path) {
@@ -1703,7 +1753,7 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
           </div>
           <button
             className="pos-signout"
-            onClick={() => { clearPosSession(); router.replace('/login'); }}
+            onClick={() => { revokeDeviceLease(); router.replace('/login'); }}
           >
             <LogOut size={14} /> Sign out workspace
           </button>
@@ -3356,7 +3406,7 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
             </button>
             <button
               type="button"
-              onClick={() => { clearPosSession(); router.replace('/login'); }}
+              onClick={() => { revokeDeviceLease(); router.replace('/login'); }}
               className="mt-3 w-full py-1.5 text-center text-xs text-slate-400 hover:text-white"
             >
               Sign out workspace
