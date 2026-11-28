@@ -20,6 +20,9 @@ jobs:
       - name: Install Desktop Dependencies
         run: npm --prefix apps/desktop install
       - name: Build Windows EXE & Portable
+        env:
+          POS_API_URL: https://ollaibooks.onrender.com/api/v1
+          NEXT_PUBLIC_API_URL: https://ollaibooks.onrender.com/api/v1
         run: npm --prefix apps/desktop run build:win
       - name: Upload Windows Artifacts
         uses: actions/upload-artifact@v4
@@ -37,6 +40,9 @@ jobs:
       - name: Install Desktop Dependencies
         run: npm --prefix apps/desktop install
       - name: Build macOS DMG
+        env:
+          POS_API_URL: https://ollaibooks.onrender.com/api/v1
+          NEXT_PUBLIC_API_URL: https://ollaibooks.onrender.com/api/v1
         run: npm --prefix apps/desktop run build:mac
       - name: Upload macOS Artifacts
         uses: actions/upload-artifact@v4
@@ -72,8 +78,37 @@ jobs:
           name: android-apk
           path: ollaiBooks-POS.apk
 
+  build-ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install Capacitor iOS
+        run: npm install --no-save @capacitor/core @capacitor/cli @capacitor/ios
+      - name: Add & Sync iOS Project
+        run: |
+          if [ ! -d "ios" ]; then npx cap add ios; fi
+          npx cap sync ios
+      - name: Build Unsigned iOS IPA
+        run: |
+          if [ -d "ios/App/App.xcworkspace" ]; then
+            xcodebuild -workspace ios/App/App.xcworkspace -scheme App -configuration Release -sdk iphoneos -archivePath build/App.xcarchive archive CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
+          else
+            xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release -sdk iphoneos -archivePath build/App.xcarchive archive CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
+          fi
+          mkdir -p build/Payload
+          cp -r build/App.xcarchive/Products/Applications/App.app build/Payload/
+          (cd build && zip -r ../ollaiBooks-POS-unsigned.ipa Payload)
+      - name: Upload iOS IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-ipa
+          path: ollaiBooks-POS-unsigned.ipa
+
   publish-release:
-    needs: [build-windows, build-macos, build-android]
+    needs: [build-windows, build-macos, build-android, build-ios]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -88,3 +123,4 @@ jobs:
             artifacts/windows-installer/*.exe
             artifacts/macos-installer/*.dmg
             artifacts/android-apk/*.apk
+            artifacts/ios-ipa/*.ipa

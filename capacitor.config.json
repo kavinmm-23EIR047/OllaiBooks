@@ -4,8 +4,8 @@
   "webDir": "apps/web/public",
   "bundledWebRuntime": false,
   "server": {
-    "url": "http://localhost:3000/offline-pos",
-    "cleartext": true
+    "url": "https://ollai-books.vercel.app/offline-pos",
+    "cleartext": false
   },
   "android": {
     "allowMixedContent": true,
