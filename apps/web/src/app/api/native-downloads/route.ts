@@ -17,7 +17,9 @@ export async function GET() {
     if (!response.ok) throw new Error(`GitHub Releases returned ${response.status}`);
 
     const release = await response.json();
-    const assets: Array<{ name: string; browser_download_url: string }> = release.assets ?? [];
+    const assets: Array<{ name: string; browser_download_url: string; updated_at?: string }> = [...(release.assets ?? [])].sort(
+      (a, b) => new Date(b.updated_at || 0).getTime() - new Date(a.updated_at || 0).getTime(),
+    );
     const pick = (matches: (name: string) => boolean) => assets.find(asset => matches(asset.name));
     const windows = pick(name => /\.exe$/i.test(name) && /setup|installer/i.test(name))
       ?? pick(name => /\.exe$/i.test(name));
