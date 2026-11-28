@@ -10,7 +10,7 @@ from livekit import agents, api
 from livekit.agents import Agent, AgentSession, RunContext, function_tool
 from livekit.plugins import openai, sarvam
 
-from .security import call_ended, call_tool, get_call_credentials, mark_call_dial_failed
+from .security import call_ended, call_tool, get_call_credentials, mark_call_answered, mark_call_dial_failed
 
 load_dotenv()
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "WARNING"))
@@ -52,7 +52,7 @@ def amount_in_words(value: str, currency: str) -> str:
     return phrase
 
 
-def make_models(language: str, voice: str):
+def make_models(language: str, voice: str, sample_rate: int = 8000):
     stt_provider = os.getenv("VOICE_STT_PROVIDER", "sarvam").lower()
     tts_provider = os.getenv("VOICE_TTS_PROVIDER", "sarvam").lower()
     speech_key = os.getenv("VOICE_SPEECH_API_KEY", "")
@@ -71,7 +71,7 @@ def make_models(language: str, voice: str):
     if tts_provider == "sarvam":
         if not os.getenv("SARVAM_API_KEY"):
             raise RuntimeError("SARVAM_API_KEY is required for Sarvam speech synthesis")
-        tts_model = sarvam.TTS(target_language_code=language, model="bulbul:v3", speaker=voice if voice != "default" else "shubh", speech_sample_rate=8000)
+        tts_model = sarvam.TTS(target_language_code=language, model="bulbul:v3", speaker=voice if voice != "default" else "shubh", speech_sample_rate=sample_rate)
     elif tts_provider == "ai4bharat-compatible":
         if not tts_base_url or not speech_key:
             raise RuntimeError("AI4Bharat-compatible TTS requires VOICE_TTS_BASE_URL and VOICE_SPEECH_API_KEY")
@@ -98,6 +98,17 @@ class PaymentReminderAgent(Agent):
         name = data.get("customerFirstName", "Customer")
         greeting = data.get("greeting", "").strip()
         test_mode = data.get("testMode") is True
+        if test_mode and data.get("webCall") is True:
+            instructions = f"""You are the AI phone assistant for {business}, answering an internet voice call from the business app. Speak in {LANGUAGE_NAMES.get(language, language)} and switch if the caller asks or switches language. Talk like a friendly phone receptionist: short natural sentences, one question at a time. If asked, say truthfully that you are an AI assistant. You cannot see any customer, invoice, payment or account data on this call, so never invent amounts, order details or account information; if asked, say the business team can help with that. Never ask for card numbers, OTPs, UPI PINs or passwords. When the caller says goodbye, say goodbye politely."""
+            if greeting:
+                instructions += f" Use this configured greeting style when you answer: {greeting}"
+            super().__init__(instructions=instructions)
+            self.data = data
+            self.identity_confirmed = False
+            self.last_user_text = ""
+            self.bill = None
+            self.outcome_logged = False
+            return
         if test_mode:
             instructions = f"""You are an AI voice agent test for {business}. Speak in {LANGUAGE_NAMES.get(language, language)}. Say you are an AI assistant and this is a test call. Say one short greeting, then ask the listener to say a few words so the speech conversation can be checked. Do not discuss invoices, money, payment links, account details, or request personal or financial information. Respond briefly to what the listener says, confirm the voice test is working, then politely end the conversation."""
             if greeting:
@@ -215,7 +226,7 @@ async def payment_agent(ctx: agents.JobContext):
     data = json.loads(ctx.job.metadata or "{}")
     if not data.get("callId") or not data.get("voiceAgentConfigId"):
         logger.warning("Rejected voice session with missing call identifiers")
-        await ctx.shutdown()
+        ctx.shutdown()
         return
     try:
         credentials = await get_call_credentials(data["callId"])
@@ -225,18 +236,41 @@ async def payment_agent(ctx: agents.JobContext):
     except Exception:
         logger.warning("Could not retrieve signing credentials for call id %s", data["callId"])
         await mark_call_dial_failed(data["callId"], "AGENT_FAILURE")
-        await ctx.shutdown()
+        ctx.shutdown()
         return
+    web_call = data.get("webCall") is True
     await ctx.connect()
-    await ctx.wait_for_participant()
+    if web_call:
+        try:
+            # The caller may hang up while it is still ringing; do not wait forever.
+            caller = await asyncio.wait_for(ctx.wait_for_participant(identity=data.get("callerIdentity")), timeout=45)
+        except asyncio.TimeoutError:
+            try:
+                await mark_call_dial_failed(data["callId"], "NO_ANSWER")
+            except Exception:
+                logger.warning("Could not store unanswered web call %s", data["callId"])
+            ctx.shutdown(reason="web caller never joined")
+            return
+    else:
+        await ctx.wait_for_participant()
+    if web_call:
+        try:
+            await mark_call_answered(data["callId"])
+        except Exception:
+            logger.warning("Could not mark web call answered for call id %s", data["callId"])
+
+        @ctx.room.on("participant_disconnected")
+        def on_caller_left(participant):
+            if participant.identity == caller.identity:
+                ctx.shutdown(reason="caller hung up")
     language = data.get("language", os.getenv("VOICE_DEFAULT_LANGUAGE", "en-IN"))
     speaker = data.get("voiceId", os.getenv("VOICE_DEFAULT_ID", "default"))
     try:
-        stt, llm, tts = make_models(language, speaker)
+        stt, llm, tts = make_models(language, speaker, 24000 if web_call else 8000)
     except Exception:
         logger.warning("Voice model initialization failed for call id %s", data["callId"])
         await mark_call_dial_failed(data["callId"], "AGENT_FAILURE")
-        await ctx.shutdown()
+        ctx.shutdown()
         return
     session = AgentSession(stt=stt, llm=llm, tts=tts)
     started = asyncio.get_running_loop().time()
@@ -250,7 +284,7 @@ async def payment_agent(ctx: agents.JobContext):
 
     try:
         await session.start(agent=call_agent, room=ctx.room)
-        opening = "Say this is an AI voice test, greet the listener, and ask them to say a few words so the voice conversation can be checked. Do not mention invoices or payments." if data.get("testMode") else "Greet the caller now. Introduce yourself as an AI assistant, say the call may be recorded, and ask whether you are speaking with the named customer. Do not mention any invoice or amount."
+        opening = "Answer the call now like a phone receptionist: greet the caller warmly, say you are the AI assistant for the business, and ask how you can help today. Keep it to one or two short sentences." if web_call else "Say this is an AI voice test, greet the listener, and ask them to say a few words so the voice conversation can be checked. Do not mention invoices or payments." if data.get("testMode") else "Greet the caller now. Introduce yourself as an AI assistant, say the call may be recorded, and ask whether you are speaking with the named customer. Do not mention any invoice or amount."
         await session.generate_reply(instructions=opening)
     except Exception:
         logger.warning("Voice session failed for call id %s", data["callId"])

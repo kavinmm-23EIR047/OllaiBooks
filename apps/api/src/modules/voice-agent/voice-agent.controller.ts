@@ -55,6 +55,12 @@ export class VoiceAgentController {
     return this.voiceAgentService.triggerTestCall(tenantId, body);
   }
 
+  @Post('web-call')
+  @RequirePermissions('communication:send')
+  startWebCall(@CurrentTenantId() tenantId: string) {
+    return this.voiceAgentService.startWebCall(tenantId);
+  }
+
   @Get('config')
   @RequirePermissions('communication:read')
   getConfig(@CurrentTenantId() tenantId: string) { return this.voiceAgentService.getSettings(tenantId); }

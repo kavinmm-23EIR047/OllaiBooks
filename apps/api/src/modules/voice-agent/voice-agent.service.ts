@@ -308,6 +308,43 @@ export class VoiceAgentService {
     return { ...call, status: 'QUEUED', scheduledAt: now.toISOString() };
   }
 
+  /** Internet (WebRTC) call to the AI agent from the app. No phone number, SIP trunk or carrier charges. */
+  async startWebCall(tenantId: string) {
+    const config = await this.prisma.voiceAgentConfig.findUnique({ where: { tenantId } });
+    if (!config?.isEnabled) throw new ConflictException('Enable the voice agent in Agent settings before calling it');
+    const workerUrl = this.config.get<string>('VOICE_WORKER_URL')?.replace(/\/$/, '');
+    const workerKey = this.config.get<string>('VOICE_WORKER_API_KEY') || '';
+    if (!workerUrl || workerKey.length < 32) throw new ServiceUnavailableException('Voice worker connection is not configured');
+    const tenant = await this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { name: true, businessProfile: { select: { tradeName: true } } } });
+    const call = await this.prisma.voiceCall.create({
+      data: { tenantId, toNumber: 'WEB', purpose: 'WEB_CALL', direction: 'OUTBOUND', status: 'RINGING', attempt: 1 },
+      select: { id: true },
+    });
+    try {
+      const response = await fetch(`${workerUrl}/calls/web-start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${workerKey}` },
+        body: JSON.stringify({
+          callId: call.id,
+          voiceAgentConfigId: config.id,
+          businessName: tenant?.businessProfile?.tradeName || tenant?.name || 'the business',
+          language: config.language,
+          voiceId: config.voiceId,
+          greeting: config.greeting || '',
+        }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!response.ok) throw new Error(`Voice worker returned HTTP ${response.status}`);
+      const room: any = await response.json();
+      if (!room?.serverUrl || !room?.participantToken) throw new Error('Voice worker returned no room token');
+      return { callId: call.id, serverUrl: room.serverUrl as string, participantToken: room.participantToken as string };
+    } catch (error: any) {
+      await this.prisma.voiceCall.updateMany({ where: { id: call.id, tenantId, status: 'RINGING' }, data: { status: 'FAILED', summary: 'Voice worker could not start the internet call', endedAt: new Date() } });
+      this.logger.warn(`Web call ${call.id} could not start: ${error.message}`);
+      throw new ServiceUnavailableException('The AI agent is not reachable right now; check that the voice worker is running');
+    }
+  }
+
   async listCalls(tenantId: string, page: any = 1, limit: any = 20) {
     const safePage = Math.max(1, Number.parseInt(String(page ?? '1'), 10) || 1);
     const safeLimit = Math.min(100, Math.max(1, Number.parseInt(String(limit ?? '20'), 10) || 20));

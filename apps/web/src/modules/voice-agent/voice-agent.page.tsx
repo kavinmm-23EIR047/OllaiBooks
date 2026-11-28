@@ -4,6 +4,7 @@ import * as React from 'react';
 import { ApiClient } from '@/lib/api-client';
 import { WorkspaceHeader } from '@/components/workspace/header';
 import { Button } from '@/components/ui/button';
+import { InternetCallCard } from './internet-call';
 import { PhoneCall, Settings2, Megaphone, ShieldCheck, RefreshCw, Play, Eye, Trash2, Save, Mic2 } from 'lucide-react';
 
 type Tab = 'calls' | 'campaigns' | 'settings' | 'privacy';
@@ -76,6 +77,7 @@ export function VoiceAgentPage() {
       {([['calls', 'Call log', PhoneCall], ['campaigns', 'Campaigns', Megaphone], ['settings', 'Agent settings', Settings2], ['privacy', 'Consent & DNC', ShieldCheck]] as const).map(([id, label, Icon]) => <button key={id} onClick={() => setTab(id)} className={`inline-flex shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition ${tab === id ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-600 hover:bg-white'}`}><Icon className="h-4 w-4" />{label}</button>)}
     </nav>
 
+    {tab === 'calls' && <InternetCallCard agentName="AI Assistant" enabled={Boolean(config.isEnabled)} onCallFinished={() => void load()} />}
     {tab === 'calls' && <section className={`${panel} overflow-hidden`}>
       <div className="flex items-center justify-between border-b border-slate-100 px-4 py-4 sm:px-6"><div><h2 className="font-semibold text-slate-900">Call history</h2><p className="mt-1 text-xs text-slate-500">Full call audio and transcript links are only shown to workspace members.</p></div><span className="text-xs text-slate-500">{calls.length} records</span></div>
       <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-3">Customer</th><th className="px-4 py-3">Purpose / invoice</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Outcome</th><th className="px-4 py-3">Duration</th><th className="px-5 py-3 text-right">Details</th></tr></thead><tbody className="divide-y divide-slate-100">{calls.map((call) => <tr key={call.id} className="hover:bg-slate-50/70"><td className="px-5 py-3"><div className="font-medium text-slate-800">{call.customer?.name || 'Customer'}</div><div className="text-xs text-slate-500">{call.toNumber}</div></td><td className="px-4 py-3"><div>{call.purpose?.replaceAll('_', ' ')}</div><div className="text-xs text-slate-500">{call.invoice?.invoiceNumber || '—'}</div></td><td className="px-4 py-3"><Status value={call.status} /></td><td className="px-4 py-3 text-slate-600">{call.outcome?.replaceAll('_', ' ') || '—'}</td><td className="px-4 py-3 tabular-nums">{call.durationSeconds ? `${call.durationSeconds}s` : '—'}</td><td className="px-5 py-3 text-right"><button onClick={() => setSelectedCall(call)} className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-50"><Eye className="h-3.5 w-3.5" />View</button></td></tr>)}</tbody></table></div>

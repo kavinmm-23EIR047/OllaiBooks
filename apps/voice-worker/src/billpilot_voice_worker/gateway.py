@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import uuid
+from datetime import timedelta
 
 from aiohttp import web
 from dotenv import load_dotenv
@@ -51,6 +52,53 @@ async def start_call(request: web.Request) -> web.Response:
     room = "bp-" + uuid.uuid4().hex
     asyncio.create_task(place_call(payload, room, trunk_id))
     return web.json_response({"status": "accepted"}, status=202)
+
+
+async def start_web_call(request: web.Request) -> web.Response:
+    """Internet (WebRTC) call: the browser joins a LiveKit room directly, so no phone number or SIP trunk is needed."""
+    authorize(request)
+    payload = await request.json()
+    required = ("callId", "voiceAgentConfigId", "businessName", "language")
+    if any(not isinstance(payload.get(key), str) or not payload[key] for key in required):
+        raise web.HTTPBadRequest(text="Invalid web call payload")
+    if not re.fullmatch(r"[0-9a-fA-F-]{36}", payload["callId"]):
+        raise web.HTTPBadRequest(text="Invalid call id")
+    if not os.environ.get("LIVEKIT_URL") or not os.environ.get("LIVEKIT_API_KEY") or not os.environ.get("LIVEKIT_API_SECRET"):
+        raise web.HTTPServiceUnavailable(text="LiveKit is not configured")
+    try:
+        credentials = await get_call_credentials(payload["callId"])
+    except Exception:
+        raise web.HTTPServiceUnavailable(text="API could not authorize this call")
+    if credentials["voiceAgentConfigId"] != payload["voiceAgentConfigId"]:
+        raise web.HTTPUnauthorized(text="Call does not belong to this voice agent")
+    room = "bp-web-" + uuid.uuid4().hex
+    identity = "web-" + payload["callId"]
+    allowed = ("callId", "voiceAgentConfigId", "businessName", "language", "voiceId", "greeting")
+    metadata = json.dumps({**{key: payload[key] for key in allowed if key in payload}, "testMode": True, "webCall": True, "callerIdentity": identity}, separators=(",", ":"))
+    lk = api.LiveKitAPI()
+    try:
+        await lk.room.create_room(api.CreateRoomRequest(name=room, empty_timeout=60, departure_timeout=10, max_participants=3))
+        await lk.agent_dispatch.create_dispatch(api.CreateAgentDispatchRequest(
+            agent_name=os.environ.get("LIVEKIT_AGENT_NAME", "billpilot-payment-agent"), room=room, metadata=metadata,
+        ))
+    except Exception:
+        logging.getLogger("billpilot.voice.gateway").warning("Could not prepare web call room for %s", payload["callId"])
+        try:
+            await lk.room.delete_room(api.DeleteRoomRequest(room=room))
+        except Exception:
+            pass
+        raise web.HTTPServiceUnavailable(text="Voice room could not be created")
+    finally:
+        await lk.aclose()
+    token = (
+        api.AccessToken()
+        .with_identity(identity)
+        .with_name("Caller")
+        .with_grants(api.VideoGrants(room_join=True, room=room, can_publish=True, can_subscribe=True, can_publish_data=False))
+        .with_ttl(timedelta(minutes=15))
+        .to_jwt()
+    )
+    return web.json_response({"serverUrl": os.environ["LIVEKIT_URL"], "participantToken": token, "roomName": room})
 
 
 async def place_call(payload: dict, room: str, trunk_id: str | None) -> None:
@@ -132,6 +180,7 @@ def main() -> None:
     app.router.add_get("/health", health)
     app.router.add_get("/ready", ready)
     app.router.add_post("/calls/start", start_call)
+    app.router.add_post("/calls/web-start", start_web_call)
     web.run_app(app, host=os.environ.get("WORKER_HOST", "127.0.0.1"), port=int(os.environ.get("WORKER_PORT", "8091")))
 
 

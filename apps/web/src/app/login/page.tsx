@@ -74,7 +74,8 @@ function LoginFormContent() {
       const payload = Object.fromEntries(form.entries());
       let response: Response;
       try {
-        response = await fetch('/api/v1/auth/' + (mode === 'login' ? 'login' : 'register'), {
+        const apiBase = (process.env.NEXT_PUBLIC_API_URL || '/api/v1').replace(/\/+$/, '');
+        response = await fetch(`${apiBase}/auth/${mode === 'login' ? 'login' : 'register'}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),

@@ -53,7 +53,7 @@ Follow these 4 steps to host **ollaiBooks** live on HTTPS with **zero `localhost
    | `PLATFORM_ADMIN_PASSWORD` | Your 16+ char admin password |
 
 5. Deploy and copy your live Render API URL, e.g.:
-   `https://ollaibooks-api.onrender.com`
+   `https://ollaibooks.onrender.com`
 
 ---
 
@@ -67,7 +67,7 @@ Follow these 4 steps to host **ollaiBooks** live on HTTPS with **zero `localhost
 
    | Key | Value |
    | :--- | :--- |
-   | `NEXT_PUBLIC_API_URL` | `https://ollaibooks-api.onrender.com/api/v1` |
+   | `NEXT_PUBLIC_API_URL` | `https://ollaibooks.onrender.com/api/v1` |
    | `NEXT_PUBLIC_ALLOW_WEB_OFFLINE` | `0` |
 
 4. Click **Deploy**. Copy your Vercel URL (e.g. `https://ollaibooks.vercel.app`).
@@ -79,7 +79,7 @@ Follow these 4 steps to host **ollaiBooks** live on HTTPS with **zero `localhost
 
 ### Windows / Mac Desktop App (`.exe` / `.dmg`)
 ```powershell
-$env:POS_API_URL="https://ollaibooks-api.onrender.com/api/v1"
+$env:POS_API_URL="https://ollaibooks.onrender.com/api/v1"
 npm run build:win
 ```
 

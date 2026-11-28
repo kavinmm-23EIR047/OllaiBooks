@@ -15,6 +15,7 @@ import { Avatar, Btn, EmptyState, Field, inputCls, Pill, relativeTime, SidePanel
 /* ------------------------------------------------------------------ */
 
 const SESSION_KEY = 'ollaibooks_admin_session';
+const ADMIN_API_BASE = `${(process.env.NEXT_PUBLIC_API_URL || '/api/v1').replace(/\/+$/, '')}/admin-bridge`;
 type AdminSession = { token: string; adminId: string; expiresAt: string };
 
 function readSession(): AdminSession | null {
@@ -27,7 +28,7 @@ function readSession(): AdminSession | null {
 class AdminAuthError extends Error {}
 
 async function adminApi<T = any>(session: AdminSession, path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`/api/v1/admin-bridge${path}`, {
+  const res = await fetch(`${ADMIN_API_BASE}${path}`, {
     ...init,
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.token}`, ...(init?.headers || {}) },
   });
@@ -85,7 +86,7 @@ function AdminLogin({ onLogin }: { onLogin: (s: AdminSession) => void }) {
     if (password.length < 8) { setError('Admin password has at least 8 characters.'); return; }
     setBusy(true);
     try {
-      const res = await fetch('/api/v1/admin-bridge/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ adminId: adminId.trim(), password }) });
+      const res = await fetch(`${ADMIN_API_BASE}/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ adminId: adminId.trim(), password }) });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.message || 'Could not sign in.');
       const session: AdminSession = { token: data.token, adminId: data.adminId, expiresAt: data.expiresAt };
