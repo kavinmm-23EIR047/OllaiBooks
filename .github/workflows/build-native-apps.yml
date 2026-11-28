@@ -86,10 +86,18 @@ jobs:
         with:
           node-version: '20'
       - name: Install Capacitor iOS
-        run: npm install --no-save @capacitor/core @capacitor/cli @capacitor/ios
+        run: npm install --no-save @capacitor/core@7 @capacitor/cli@7 @capacitor/ios@7
       - name: Add & Sync iOS Project
         run: |
-          if [ ! -d "ios" ]; then npx cap add ios; fi
+          # `cap add` runs `pod install`, which can fail if the template's iOS target
+          # is lower than the Capacitor pod needs; we fix the target and sync below.
+          if [ ! -d "ios" ]; then npx cap add ios || true; fi
+          # Use the minimum iOS version declared by the installed Capacitor pod.
+          IOS_TARGET=$(grep -Eo "ios\.deployment_target *= *'[0-9.]+'|platform *= *:ios, *'[0-9.]+'" node_modules/@capacitor/ios/Capacitor.podspec | grep -Eo "[0-9]+(\.[0-9]+)?" | head -1)
+          IOS_TARGET=${IOS_TARGET:-15.0}
+          echo "Using iOS deployment target $IOS_TARGET"
+          sed -i '' -E "s/^platform :ios, .*/platform :ios, '$IOS_TARGET'/" ios/App/Podfile
+          sed -i '' -E "s/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]+;/IPHONEOS_DEPLOYMENT_TARGET = $IOS_TARGET;/g" ios/App/App.xcodeproj/project.pbxproj
           npx cap sync ios
       - name: Build Unsigned iOS IPA
         run: |
