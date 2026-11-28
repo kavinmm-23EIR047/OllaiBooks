@@ -175,7 +175,23 @@ function createWindow() {
       contextIsolation: true,
       sandbox: true,
       webSecurity: true,
+      allowRunningInsecureContent: false,
+      devTools: !app.isPackaged,
     },
+  });
+
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('http://127.0.0.1:') || url.startsWith('http://localhost:') || url === 'about:blank') {
+      return { action: 'allow' };
+    }
+    return { action: 'deny' };
+  });
+
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const allowedPrefix = app.isPackaged ? `http://127.0.0.1:${POS_PORT}` : (process.env.POS_URL || 'http://localhost:3000');
+    if (!url.startsWith(allowedPrefix) && !url.startsWith('data:text/html')) {
+      event.preventDefault();
+    }
   });
 
   getPosUrl().then((targetUrl) => mainWindow && mainWindow.loadURL(targetUrl)).catch((err) => {

@@ -35,7 +35,8 @@
         "nsis"
       ],
       "icon": "../web/public/billpilot-icon-512.png",
-      "signAndEditExecutable": false
+      "signAndEditExecutable": true,
+      "requestedExecutionLevel": "asInvoker"
     },
     "mac": {
       "target": [

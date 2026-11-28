@@ -10,7 +10,7 @@ import {
   Building2, Upload, FileText, CheckCircle2, AlertCircle, RefreshCw,
   QrCode, CreditCard, Laptop, Shirt, Coffee, Tag, Boxes, Layers, Store,
   Smartphone, User, Clock, Receipt, ShieldCheck, Pencil, Calculator,
-  ExternalLink, Copy, Monitor, Share2, Lock, KeyRound
+  ExternalLink, Copy, Monitor, Share2, Lock, KeyRound, Palette
 } from 'lucide-react';
 import { ApiClient } from '@/lib/api-client';
 import { clearPosSession, getPosSessionMode } from '@/lib/offline-auth';
@@ -126,7 +126,47 @@ export interface Shop {
   fssai?: string;
   gstRegistration?: GstRegistrationType;
   brandColor?: string;
+  secondaryColor?: string;
+  appAccentColor?: string;
+  appSurfaceColor?: string;
+  appSidebarColor?: string;
   [key: string]: unknown;
+}
+
+const APP_THEME_PRESETS = [
+  { id: 'blue-silver', name: 'Blue & Silver', accent: '#2563eb', surface: '#f1f5f9', sidebar: '#ffffff' },
+  { id: 'emerald-mist', name: 'Emerald & Mist', accent: '#059669', surface: '#ecfdf5', sidebar: '#ffffff' },
+  { id: 'indigo-gray', name: 'Indigo & Cool Gray', accent: '#4f46e5', surface: '#eef2ff', sidebar: '#f8fafc' },
+  { id: 'teal-slate', name: 'Teal & Slate', accent: '#0d9488', surface: '#f0fdfa', sidebar: '#ffffff' },
+  { id: 'violet-pearl', name: 'Violet & Pearl', accent: '#7c3aed', surface: '#f5f3ff', sidebar: '#ffffff' },
+  { id: 'rose-warm', name: 'Rose & Warm Gray', accent: '#e11d48', surface: '#fff1f2', sidebar: '#ffffff' },
+  { id: 'amber-sand', name: 'Amber & Sand', accent: '#d97706', surface: '#fffbeb', sidebar: '#ffffff' },
+] as const;
+
+function safeHex(val: string | undefined, fallback: string) {
+  return val && /^#[0-9a-fA-F]{6}$/.test(val.trim()) ? val.trim() : fallback;
+}
+
+function mixHex(hex: string, target: string, weight: number) {
+  const a = safeHex(hex, '#2563eb').slice(1);
+  const b = safeHex(target, '#ffffff').slice(1);
+  const mix = (i: number) => Math.round(parseInt(a.slice(i, i + 2), 16) * (1 - weight) + parseInt(b.slice(i, i + 2), 16) * weight);
+  return `#${[mix(0), mix(2), mix(4)].map(n => Math.max(0, Math.min(255, n)).toString(16).padStart(2, '0')).join('')}`;
+}
+
+function buildAppThemeVars(shop: Shop): React.CSSProperties {
+  const accent = safeHex(shop.appAccentColor, '#2563eb');
+  const surface = safeHex(shop.appSurfaceColor, '#f1f5f9');
+  const sidebar = safeHex(shop.appSidebarColor, '#ffffff');
+  return {
+    '--brand-blue': accent,
+    '--brand-blue-hover': mixHex(accent, '#000000', 0.14),
+    '--brand-blue-soft': mixHex(accent, '#ffffff', 0.90),
+    '--brand-blue-border': mixHex(accent, '#ffffff', 0.72),
+    '--silver': surface,
+    '--silver-soft': mixHex(surface, '#ffffff', 0.55),
+    '--sidebar-bg': sidebar,
+  } as React.CSSProperties;
 }
 
 const GSTIN_PATTERN = /^\d{2}[A-Z]{5}\d{4}[A-Z][A-Z0-9]Z[A-Z0-9]$/;
@@ -221,13 +261,13 @@ function getIndustryProfile(businessType: string): {
 // Category Icon Helper for Multi-Tenant Businesses
 function getCategoryIcon(cat: string) {
   const c = (cat || '').toLowerCase();
-  if (c === 'all items') return <Layers size={13} className="text-blue-600" />;
+  if (c === 'all items') return <Layers size={13} className="text-[var(--brand-blue)]" />;
   if (c.includes('electron') || c.includes('tech') || c.includes('hardware') || c.includes('mobile')) return <Laptop size={13} className="text-sky-600" />;
   if (c.includes('apparel') || c.includes('cloth') || c.includes('fashion') || c.includes('shirt')) return <Shirt size={13} className="text-indigo-600" />;
   if (c.includes('beverage') || c.includes('coffee') || c.includes('drink') || c.includes('tea')) return <Coffee size={13} className="text-amber-600" />;
   if (c.includes('food') || c.includes('grocer') || c.includes('supermarket')) return <ShoppingCart size={13} className="text-emerald-600" />;
   if (c.includes('service') || c.includes('consult')) return <Building2 size={13} className="text-purple-600" />;
-  if (c.includes('retail') || c.includes('confectionery')) return <ShoppingBag size={13} className="text-blue-600" />;
+  if (c.includes('retail') || c.includes('confectionery')) return <ShoppingBag size={13} className="text-[var(--brand-blue)]" />;
   return <Tag size={13} className="text-slate-500" />;
 }
 
@@ -237,7 +277,7 @@ function renderProductCardArt(p: Product) {
   const cat = (p.category || '').toLowerCase();
 
   if (name.includes('mouse') || name.includes('cable') || name.includes('phone') || name.includes('laptop') || name.includes('keyboard') || cat.includes('electron')) {
-    return <Laptop size={32} className="text-blue-600" />;
+    return <Laptop size={32} className="text-[var(--brand-blue)]" />;
   }
   if (name.includes('shirt') || name.includes('cloth') || name.includes('pant') || name.includes('t-shirt') || cat.includes('apparel')) {
     return <Shirt size={32} className="text-indigo-600" />;
@@ -255,7 +295,7 @@ function renderProductCardArt(p: Product) {
     return <ShoppingBag size={26} className="text-purple-600" />;
   }
   const iconKey = p.emoji || '';
-  if (iconKey === 'icon:laptop' || iconKey === '💻') return <Laptop size={26} className="text-blue-600" />;
+  if (iconKey === 'icon:laptop' || iconKey === '💻') return <Laptop size={26} className="text-[var(--brand-blue)]" />;
   if (iconKey === 'icon:phone' || iconKey === '📱') return <Smartphone size={26} className="text-indigo-600" />;
   if (iconKey === 'icon:shirt' || iconKey === '👕') return <Shirt size={26} className="text-rose-600" />;
   if (iconKey === 'icon:bag' || iconKey === '🛒') return <ShoppingBag size={26} className="text-emerald-600" />;
@@ -409,6 +449,7 @@ function OfflinePosApp() {
   const [calculatorAccumulator, setCalculatorAccumulator] = React.useState<number | null>(null);
   const [calculatorOperator, setCalculatorOperator] = React.useState<string | null>(null);
   const [calculatorReplaceDisplay, setCalculatorReplaceDisplay] = React.useState(false);
+  const [calculatorHistory, setCalculatorHistory] = React.useState('');
   const saleInProgress = React.useRef(false);
   const tenantLoadGeneration = React.useRef(0);
   const [savingSale, setSavingSale] = React.useState(false);
@@ -532,12 +573,32 @@ function OfflinePosApp() {
         });
     }
 
-    setOnline(navigator.onLine);
-    const onOnline = () => setOnline(true);
+    const checkConnectivity = async () => {
+      if (!navigator.onLine) {
+        setOnline(false);
+        return;
+      }
+      try {
+        const base = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
+        const res = await fetch(`${base}/health`, {
+          method: 'GET',
+          cache: 'no-store',
+          signal: AbortSignal.timeout(3500),
+        });
+        setOnline(res.status < 500);
+      } catch {
+        setOnline(false);
+      }
+    };
+
+    void checkConnectivity();
+    const onOnline = () => { void checkConnectivity(); };
     const onOffline = () => setOnline(false);
+    const probeTimer = window.setInterval(() => { void checkConnectivity(); }, 15000);
     window.addEventListener('online', onOnline);
     window.addEventListener('offline', onOffline);
     return () => {
+      window.clearInterval(probeTimer);
       window.removeEventListener('online', onOnline);
       window.removeEventListener('offline', onOffline);
     };
@@ -926,14 +987,16 @@ function OfflinePosApp() {
   };
 
   const calculatorPress = (key: string) => {
-    if (/^\d$/.test(key) || key === '.') {
+    if (/^\d$/.test(key) || key === '.' || key === '00') {
       setCalculatorDisplay(current => {
         const value = calculatorReplaceDisplay ? '' : current;
         if (key === '.' && value.includes('.')) return value || '0';
         if (key === '.' && (!value || value === '0')) return '0.';
+        if (key === '00') return !value || value === '0' ? '0' : `${value}00`;
         return `${value === '0' ? '' : value}${key}` || '0';
       });
       setCalculatorReplaceDisplay(false);
+      if (calculatorAccumulator === null && calculatorHistory) setCalculatorHistory('');
       return;
     }
     if (key === 'C') {
@@ -941,6 +1004,7 @@ function OfflinePosApp() {
       setCalculatorAccumulator(null);
       setCalculatorOperator(null);
       setCalculatorReplaceDisplay(false);
+      setCalculatorHistory('');
       return;
     }
     if (key === '⌫') {
@@ -950,9 +1014,18 @@ function OfflinePosApp() {
     }
     const current = Number(calculatorDisplay);
     if (!Number.isFinite(current)) return;
+    if (key === '%') {
+      const pct = calculatorAccumulator !== null && calculatorOperator
+        ? (calculatorAccumulator * current) / 100
+        : current / 100;
+      setCalculatorDisplay(Number.isFinite(pct) ? String(Number(pct.toFixed(8))) : 'Error');
+      setCalculatorReplaceDisplay(false);
+      return;
+    }
     if (key === '=') {
       if (calculatorAccumulator === null || !calculatorOperator) return;
       const result = calculate(calculatorAccumulator, current, calculatorOperator);
+      setCalculatorHistory(`${calculatorAccumulator} ${calculatorOperator} ${current} =`);
       setCalculatorDisplay(Number.isFinite(result) ? String(Number(result.toFixed(8))) : 'Error');
       setCalculatorAccumulator(null);
       setCalculatorOperator(null);
@@ -1533,12 +1606,12 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
   return !authReady || !ready || loadedTenantId !== activeTenantId ? (
     <main className="pos-auth-loading">
       <div className="flex flex-col items-center gap-3">
-        <RefreshCw className="h-6 w-6 animate-spin text-blue-600" />
+        <RefreshCw className="h-6 w-6 animate-spin text-[var(--brand-blue)]" />
         <span>{authReady ? 'Loading this workspace’s offline records…' : 'Authenticating your subscribed workspace…'}</span>
       </div>
     </main>
   ) : (
-    <main className="pos-app">
+    <main className="pos-app" style={buildAppThemeVars(shop)}>
       {/* 1. Sidebar Navigation */}
       <aside className={`pos-sidebar ${mobileMenu ? 'pos-sidebar-open' : ''}`}>
         <a className="pos-brand" href="/offline-pos">
@@ -1555,7 +1628,7 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
         <div className="relative mb-5">
           <button
             onClick={() => setWorkspaceMenuOpen(!workspaceMenuOpen)}
-            className="pos-store-select w-full text-left cursor-pointer hover:border-blue-400 transition"
+            className="pos-store-select w-full text-left cursor-pointer hover:border-[var(--brand-blue)] transition"
             title="Switch Tenant Workspace"
           >
             <div className={`pos-store-avatar ${shop.logo ? 'has-logo' : ''}`}>
@@ -1578,11 +1651,11 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                   key={wp.tenantId}
                   onClick={() => handleSwitchWorkspace(wp.tenantId)}
                   className={`flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs transition ${
-                    wp.tenantId === activeTenantId ? 'bg-blue-50 font-bold text-blue-700' : 'text-slate-700 hover:bg-slate-50'
+                    wp.tenantId === activeTenantId ? 'bg-[var(--brand-blue-soft)] font-bold text-[var(--brand-blue-hover)]' : 'text-slate-700 hover:bg-slate-50'
                   }`}
                 >
                   <span className="truncate">{wp.tenantName}</span>
-                  {wp.tenantId === activeTenantId && <Check size={14} className="text-blue-600" />}
+                  {wp.tenantId === activeTenantId && <Check size={14} className="text-[var(--brand-blue)]" />}
                 </button>
               ))}
             </div>
@@ -1655,13 +1728,13 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
           <button
             type="button"
             onClick={() => setNativeModalOpen(true)}
-            className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 text-xs font-semibold text-blue-700 shadow-sm hover:bg-blue-50 hover:border-blue-300 active:scale-95 transition-all"
+            className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-[var(--brand-blue-border)] bg-white px-3.5 py-1.5 text-xs font-semibold text-[var(--brand-blue-hover)] shadow-sm hover:bg-[var(--brand-blue-soft)] active:scale-95 transition-all whitespace-nowrap"
             title="Convert and install native app for Android APK, Windows, Mac, or iOS"
           >
             <Download size={15} /> Get App (APK / Desktop)
           </button>
 
-          <button type="button" onClick={() => setCalculatorOpen(true)} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50" aria-label="Open calculator">
+          <button type="button" onClick={() => setCalculatorOpen(true)} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 whitespace-nowrap" aria-label="Open calculator">
             <Calculator size={15} /> Calculator
           </button>
 
@@ -1669,7 +1742,7 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
             <button
               type="button"
               onClick={() => { setPinInput(''); setPinError(''); setCounterLocked(true); }}
-              className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm hover:bg-amber-50 hover:text-amber-800 hover:border-amber-200 transition"
+              className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-amber-50 hover:text-amber-800 hover:border-amber-200 transition whitespace-nowrap"
               title="Lock counter screen with PIN"
             >
               <Lock size={14} /> Lock
@@ -1680,7 +1753,7 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
           {cart.length > 0 && (
             <button
               onClick={() => setMobileCartOpen(!mobileCartOpen)}
-              className="pos-mobile-cart-toggle md:hidden flex items-center gap-1.5 rounded-full bg-blue-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm"
+              className="pos-mobile-cart-toggle md:hidden flex items-center gap-1.5 rounded-full bg-[var(--brand-blue)] px-3.5 py-1.5 text-xs font-bold text-white shadow-sm whitespace-nowrap"
             >
               <ShoppingCart size={14} />
               <span>{cart.reduce((a, b) => a + b.quantity, 0)}</span>
@@ -1691,12 +1764,34 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
           <button
             type="button"
             onClick={requestSync}
-            className={`pos-connection ${online ? (pendingCount ? 'pending' : 'connected') : 'disconnected'}`}
-            title={online ? 'Click to sync bills to the cloud now' : 'You are offline — bills are saved on this device'}
+            className={`pos-connection ${!online || posSessionMode === 'offline' ? 'disconnected' : pendingCount || syncingSales ? 'pending' : 'connected'}`}
+            title={
+              !online
+                ? 'Offline mode — bills are saved locally on this device'
+                : posSessionMode === 'offline'
+                  ? 'Offline login active — sign in online to sync to cloud'
+                  : 'Click to sync bills to the cloud now'
+            }
           >
-            {!online ? <WifiOff size={15} /> : syncingSales ? <RefreshCw size={15} className="animate-spin" /> : pendingCount ? <Cloud size={15} /> : <Wifi size={15} />}
+            {!online || posSessionMode === 'offline' ? (
+              <WifiOff size={15} />
+            ) : syncingSales ? (
+              <RefreshCw size={15} className="animate-spin" />
+            ) : pendingCount ? (
+              <Cloud size={15} />
+            ) : (
+              <Wifi size={15} />
+            )}
             <span>
-              {!online ? 'Offline' : syncingSales ? 'Syncing…' : pendingCount ? 'Online' : 'Online · Synced'}
+              {!online
+                ? 'Offline · Local Vault'
+                : posSessionMode === 'offline'
+                  ? 'Offline Login · Local'
+                  : syncingSales
+                    ? 'Online · Syncing…'
+                    : pendingCount
+                      ? 'Online · Pending Sync'
+                      : 'Online · Synced'}
             </span>
             {pendingCount > 0 && <i className="pos-connection-count">{pendingCount}</i>}
           </button>
@@ -1763,37 +1858,107 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
             </div>
 
               <div className="pos-metric-row pos-dashboard-metrics">
-              <div className="pos-metric-card"><span>Orders today</span><b>{todaySales.length + todayWebsiteOrders.length}</b><small>{todaySales.length} shop · {todayWebsiteOrders.length} website</small></div>
-              <div className="pos-metric-card"><span>Shop revenue today</span><b>{money(todayRevenue)}</b><small>{todaySales.length} local bills</small></div>
-              <div className="pos-metric-card"><span>Average bill today</span><b>{money(averageBill)}</b><small>Across {todaySales.length} local bills</small></div>
-              <div className="pos-metric-card"><span>Low stock</span><b>{lowStockProducts.length}</b><small>Items need attention</small></div>
-              <div className="pos-metric-card"><span>Upcoming reminders</span><b>{upcomingReminders.length}</b><small>Saved on this device</small></div>
+              <div className="pos-metric-card">
+                <div className="flex items-center justify-between gap-2"><span>Orders today</span><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--brand-blue-soft)] text-[var(--brand-blue)]"><ShoppingBag size={14} /></span></div>
+                <b>{todaySales.length + todayWebsiteOrders.length}</b>
+                <small>{todaySales.length} shop · {todayWebsiteOrders.length} website</small>
+              </div>
+              <div className="pos-metric-card">
+                <div className="flex items-center justify-between gap-2"><span>Shop revenue today</span><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600"><IndianRupee size={14} /></span></div>
+                <b>{money(todayRevenue)}</b>
+                <small>{todaySales.length} local bills</small>
+              </div>
+              <div className="pos-metric-card">
+                <div className="flex items-center justify-between gap-2"><span>Average bill today</span><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--brand-blue-soft)] text-[var(--brand-blue)]"><Receipt size={14} /></span></div>
+                <b>{money(averageBill)}</b>
+                <small>Across {todaySales.length} local bills</small>
+              </div>
+              <div className="pos-metric-card">
+                <div className="flex items-center justify-between gap-2"><span>Low stock</span><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-50 text-amber-600"><Package size={14} /></span></div>
+                <b>{lowStockProducts.length}</b>
+                <small>Items need attention</small>
+              </div>
+              <div className="pos-metric-card">
+                <div className="flex items-center justify-between gap-2"><span>Upcoming reminders</span><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-600"><Clock size={14} /></span></div>
+                <b>{upcomingReminders.length}</b>
+                <small>Saved on this device</small>
+              </div>
             </div>
 
             <div className="grid gap-4 xl:grid-cols-2">
               <div className="pos-data-card">
-                <div className="pos-data-heading"><div><h2>Today’s payments</h2><span>Payment totals from bills saved on this device</span></div><Banknote size={19} className="text-emerald-600" /></div>
+                <div className="pos-data-heading"><div><h2>Today’s payments</h2><span>Payment totals from bills saved on this device</span></div><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-600"><Banknote size={17} /></span></div>
                 <div className="pos-card-body">
-                  {Object.keys(todayPaymentTotals).length ? <div className="divide-y divide-slate-100">{Object.entries(todayPaymentTotals).map(([label, amount]) => <div key={label} className="flex items-center justify-between gap-3 py-3 text-xs"><span className="font-semibold text-slate-700">{label}</span><b>{money(amount)}</b></div>)}</div> : <p className="py-6 text-center text-xs text-slate-500">Payment totals will appear here after your first bill.</p>}
+                  {Object.keys(todayPaymentTotals).length ? (
+                    <div className="divide-y divide-slate-100">
+                      {Object.entries(todayPaymentTotals).map(([label, amount]) => (
+                        <div key={label} className="flex items-center justify-between gap-3 py-3 text-xs">
+                          <span className="inline-flex items-center gap-2 font-semibold text-slate-700">
+                            <span className="flex h-6 w-6 items-center justify-center rounded-md bg-[var(--brand-blue-soft)] text-[var(--brand-blue)]">
+                              {label.toLowerCase().includes('upi') ? <QrCode size={13} /> : label.toLowerCase().includes('card') ? <CreditCard size={13} /> : <Banknote size={13} />}
+                            </span>
+                            {label}
+                          </span>
+                          <b className="text-sm text-slate-900 tabular-nums">{money(amount)}</b>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center gap-2 py-6 text-center">
+                      <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--brand-blue-soft)] text-[var(--brand-blue)]"><Banknote size={18} /></span>
+                      <p className="text-xs text-slate-500">Payment totals will appear here after your first bill.</p>
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="pos-data-card">
-                <div className="pos-data-heading"><div><h2>Top-selling today</h2><span>Ranked by units sold in local bills</span></div><Activity size={19} className="text-blue-600" /></div>
+                <div className="pos-data-heading"><div><h2>Top-selling today</h2><span>Ranked by units sold in local bills</span></div><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--brand-blue-soft)] border border-[var(--brand-blue-border)] text-[var(--brand-blue)]"><Activity size={17} /></span></div>
                 <div className="pos-card-body">
-                  {topSellingItems.length ? <div className="divide-y divide-slate-100">{topSellingItems.map((item, index) => <div key={`${item.name}:${index}`} className="flex items-center justify-between gap-3 py-3 text-xs"><span><b className="text-slate-900">{index + 1}. {item.name}</b><small className="mt-1 block text-slate-500">{item.quantity} sold</small></span><b>{money(item.revenue)}</b></div>)}</div> : <p className="py-6 text-center text-xs text-slate-500">Top products appear after you complete a bill.</p>}
+                  {topSellingItems.length ? (
+                    <div className="divide-y divide-slate-100">
+                      {topSellingItems.map((item, index) => (
+                        <div key={`${item.name}:${index}`} className="flex items-center justify-between gap-3 py-3 text-xs">
+                          <span className="flex items-center gap-2.5 min-w-0">
+                            <span className="flex h-6 w-6 flex-none items-center justify-center rounded-md bg-[var(--brand-blue-soft)] text-[11px] font-bold text-[var(--brand-blue-hover)]">#{index + 1}</span>
+                            <span className="min-w-0">
+                              <b className="block truncate text-slate-900">{item.name}</b>
+                              <small className="block text-slate-500">{item.quantity} sold</small>
+                            </span>
+                          </span>
+                          <b className="text-sm text-slate-900 tabular-nums">{money(item.revenue)}</b>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center gap-2 py-6 text-center">
+                      <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--brand-blue-soft)] text-[var(--brand-blue)]"><Activity size={18} /></span>
+                      <p className="text-xs text-slate-500">Top products appear after you complete a bill.</p>
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="pos-data-card">
                 <div className="pos-data-heading"><div><h2>Current order book</h2><span>Combined view · shop and website orders stay labelled by source</span></div><button className="pos-secondary-action" onClick={() => setTab('sales')}>View all <span>→</span></button></div>
                 <div className="pos-card-body">
-                  {orderBook.slice(0, 6).length ? <div className="divide-y divide-slate-100">{orderBook.slice(0, 6).map(order => <div key={`${order.source}:${order.id}`} className="flex flex-wrap items-center justify-between gap-3 py-3 text-xs"><div className="min-w-0"><b className="text-slate-900">{order.orderNumber}</b><span className={`ml-2 rounded-full px-2 py-0.5 font-bold ${order.source === 'shop' ? 'bg-blue-50 text-blue-700' : 'bg-violet-50 text-violet-700'}`}>{order.source === 'shop' ? 'SHOP' : 'WEBSITE'}</span><small className="mt-1 block truncate text-slate-500">{order.customerName} · {new Date(order.date).toLocaleString('en-IN')}</small>{order.source === 'shop' && (order.raw as Sale).orderType && <small className="mt-0.5 block text-blue-700">{(order.raw as Sale).orderType}{(order.raw as Sale).tableNumber ? ` · Table ${(order.raw as Sale).tableNumber}` : ''}</small>}</div><b>{money(order.total)}</b></div>)}</div> : <p className="py-6 text-center text-xs text-slate-500">No orders saved yet.</p>}
+                  {orderBook.slice(0, 6).length ? <div className="divide-y divide-slate-100">{orderBook.slice(0, 6).map(order => <div key={`${order.source}:${order.id}`} className="flex flex-wrap items-center justify-between gap-3 py-3 text-xs"><div className="min-w-0"><b className="text-slate-900">{order.orderNumber}</b><span className={`ml-2 rounded-full px-2 py-0.5 font-bold ${order.source === 'shop' ? 'bg-[var(--brand-blue-soft)] text-[var(--brand-blue-hover)]' : 'bg-violet-50 text-violet-700'}`}>{order.source === 'shop' ? 'SHOP' : 'WEBSITE'}</span><small className="mt-1 block truncate text-slate-500">{order.customerName} · {new Date(order.date).toLocaleString('en-IN')}</small>{order.source === 'shop' && (order.raw as Sale).orderType && <small className="mt-0.5 block text-[var(--brand-blue-hover)]">{(order.raw as Sale).orderType}{(order.raw as Sale).tableNumber ? ` · Table ${(order.raw as Sale).tableNumber}` : ''}</small>}</div><b className="text-sm text-slate-900 tabular-nums">{money(order.total)}</b></div>)}</div> : (
+                    <div className="flex flex-col items-center justify-center gap-2 py-6 text-center">
+                      <SyncCloudIllustration className="w-20 h-auto" />
+                      <p className="text-xs text-slate-500">No orders saved yet. Start a bill to see live records here.</p>
+                    </div>
+                  )}
                 </div>
               </div>
 
               <div className="pos-data-card">
                 <div className="pos-data-heading"><div><h2>Stock alerts</h2><span>Low quantities from this offline catalog</span></div><button className="pos-secondary-action" onClick={() => setTab('products')}>Manage stock <span>→</span></button></div>
                 <div className="pos-card-body">
-                  {lowStockProducts.slice(0, 6).length ? <div className="divide-y divide-slate-100">{lowStockProducts.slice(0, 6).map(product => <div key={product.id} className="flex items-center justify-between gap-3 py-3 text-xs"><span><b className="text-slate-900">{product.name}</b><small className="mt-1 block text-slate-500">{product.category}</small></span><b className="rounded-full bg-amber-50 px-2.5 py-1 text-amber-800">{product.stock} {product.stockUnit || 'pcs'}</b></div>)}</div> : <p className="py-6 text-center text-xs text-slate-500">No low-stock items. Stock levels look healthy.</p>}
+                  {lowStockProducts.slice(0, 6).length ? <div className="divide-y divide-slate-100">{lowStockProducts.slice(0, 6).map(product => <div key={product.id} className="flex items-center justify-between gap-3 py-3 text-xs"><span><b className="text-slate-900">{product.name}</b><small className="mt-1 block text-slate-500">{product.category}</small></span><b className="rounded-full bg-amber-50 px-2.5 py-1 text-amber-800">{product.stock} {product.stockUnit || 'pcs'}</b></div>)}</div> : (
+                    <div className="flex flex-col items-center justify-center gap-2 py-6 text-center">
+                      <span className="flex h-11 w-11 items-center justify-center rounded-2xl border border-emerald-200 bg-emerald-50 text-emerald-600"><ShieldCheck size={20} /></span>
+                      <b className="text-xs text-slate-800">All stock levels look healthy</b>
+                      <p className="text-[11px] text-slate-500">Low-quantity alerts will automatically appear here.</p>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -1801,9 +1966,9 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                 <div className="pos-data-heading"><div><h2>Offline calendar & reminders</h2><span>Private to this device and available without internet</span></div><span className="pos-method-pill">{upcomingReminders.length} upcoming</span></div>
                 <div className="pos-card-body">
                   <form onSubmit={addReminder} className="grid gap-2.5 rounded-xl border border-slate-200/80 bg-slate-50 p-3.5 sm:grid-cols-4">
-                    <input required maxLength={100} value={reminderTitle} onChange={e => setReminderTitle(e.target.value)} placeholder="Reminder title" className="min-w-0 h-10 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-900 focus:border-blue-600 focus:outline-none" />
-                    <input required type="datetime-local" value={reminderDate} onChange={e => setReminderDate(e.target.value)} className="min-w-0 h-10 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-900 focus:border-blue-600 focus:outline-none" />
-                    <input maxLength={240} value={reminderNote} onChange={e => setReminderNote(e.target.value)} placeholder="Note (optional)" className="min-w-0 h-10 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-900 focus:border-blue-600 focus:outline-none" />
+                    <input required maxLength={100} value={reminderTitle} onChange={e => setReminderTitle(e.target.value)} placeholder="Reminder title" className="min-w-0 h-10 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-900 focus:border-[var(--brand-blue)] focus:outline-none" />
+                    <input required type="datetime-local" value={reminderDate} onChange={e => setReminderDate(e.target.value)} className="min-w-0 h-10 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-900 focus:border-[var(--brand-blue)] focus:outline-none" />
+                    <input maxLength={240} value={reminderNote} onChange={e => setReminderNote(e.target.value)} placeholder="Note (optional)" className="min-w-0 h-10 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-900 focus:border-[var(--brand-blue)] focus:outline-none" />
                     <button type="submit" className="pos-primary-action justify-center"><Plus size={14} /> Add reminder</button>
                   </form>
                   <div className="mt-3 divide-y divide-slate-100">
@@ -1860,11 +2025,13 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                     </div>
                     {/* Quick Add Product Button */}
                     <button
+                      type="button"
                       onClick={() => { resetProductForm(); setAddProductModalOpen(true); }}
-                      className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-blue-700 shadow-xs transition"
+                      className="pos-primary-action"
+                      style={{ height: 40, padding: '0 14px' }}
                       title={`Add a new ${industry.itemSingular} offline`}
                     >
-                      <Plus size={14} />
+                      <Plus size={15} />
                       <span className="hidden sm:inline">{industry.key === 'salon' ? 'Add Service' : industry.key === 'restaurant' ? 'Add Menu Item' : 'Add Item'}</span>
                     </button>
                   </div>
@@ -1892,7 +2059,7 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                       key={p.id}
                       onClick={() => addToCart(p)}
                     >
-                      <span className="pos-product-art" style={{ background: p.color || '#f8fafc' }}>
+                      <span className="pos-product-art">
                         {renderProductCardArt(p)}
                         <i><Plus size={14} /></i>
                       </span>
@@ -1930,12 +2097,12 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                     <span className="pos-dot" />
                     {industry.key === 'salon' ? 'Service bookings do not reduce product stock; tracked retail items adjust automatically.' : 'Inventory automatically adjusts with each completed bill.'}
                   </span>
-                  <div className="flex items-center gap-3">
-                    <button onClick={() => setImportExcelModalOpen(true)} className="flex items-center gap-1 font-semibold">
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => setImportExcelModalOpen(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition">
                       <FileSpreadsheet size={13} />
                       <span>Import Excel</span>
                     </button>
-                    <button onClick={() => setTab('products')}>
+                    <button onClick={() => setTab('products')} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-[var(--brand-blue-hover)] hover:bg-[var(--brand-blue-soft)] transition">
                        {industry.key === 'salon' ? 'Manage Services & Stock' : industry.key === 'restaurant' ? 'Manage Menu & Stock' : 'Manage Stock'} <span>→</span>
                     </button>
                   </div>
@@ -1984,7 +2151,9 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                     ))
                   ) : (
                     <div className="pos-cart-empty">
-                      <EmptyCartIllustration className="w-28 h-auto" />
+                      <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-[var(--brand-blue-border)] bg-[var(--brand-blue-soft)] text-[var(--brand-blue)]">
+                        <ShoppingCart size={22} />
+                      </div>
                       <b>Ready for the next customer</b>
                       <span>Tap any item on the left to start a bill. It works with or without internet.</span>
                     </div>
@@ -2015,8 +2184,8 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
 
                   <div className="pos-input-row">
                     <label className="pos-field-label">
-                      <span className="flex items-center gap-1">
-                        <User size={12} className="text-blue-600" />
+                      <span className="flex items-center gap-1.5">
+                        <User size={12} className="text-[var(--brand-blue)]" />
                         <span>{industry.customerLabel}</span>
                       </span>
                       <input
@@ -2031,7 +2200,7 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                             if (match.state && !customerState) setCustomerState(match.state);
                           }
                         }}
-                        placeholder="Walk-in"
+                        placeholder={`Enter ${industry.customerLabel.toLowerCase()} name`}
                       />
                       <datalist id="pos-offline-customers">
                         {recentCustomers.map(c => (
@@ -2041,15 +2210,15 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                     </label>
 
                     <label className="pos-field-label">
-                      <span className="flex items-center gap-1">
-                        <Smartphone size={12} className="text-blue-600" />
+                      <span className="flex items-center gap-1.5">
+                        <Smartphone size={12} className="text-[var(--brand-blue)]" />
                         <span>Phone</span>
                       </span>
                       <input
                         inputMode="tel"
                         value={phone}
                         onChange={e => setPhone(e.target.value)}
-                        placeholder="+91 98765..."
+                        placeholder="Enter phone number"
                       />
                     </label>
                   </div>
@@ -2109,7 +2278,7 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
 
                       <label className="pos-field-label">
                         <span className="flex items-center gap-1">
-                          <Clock size={12} className="text-blue-600" />
+                          <Clock size={12} className="text-[var(--brand-blue)]" />
                           <span>{industry.dateLabel}</span>
                         </span>
                         <input
@@ -2122,7 +2291,7 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
 
                       <label className="pos-field-label">
                         <span className="flex items-center gap-1">
-                          <FileText size={12} className="text-blue-600" />
+                          <FileText size={12} className="text-[var(--brand-blue)]" />
                           <span>{industry.notesLabel}</span>
                         </span>
                         <input
@@ -2241,7 +2410,7 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                 <span>Pending online sync</span>
                 <b>{pendingCount}</b>
                 <small>{syncMessage}</small>
-                <button type="button" className="mt-2 inline-flex items-center gap-1 self-start text-left text-xs font-bold text-blue-700 hover:underline" onClick={requestSync}>
+                <button type="button" className="mt-2 inline-flex items-center gap-1 self-start text-left text-xs font-bold text-[var(--brand-blue-hover)] hover:underline" onClick={requestSync}>
                   {syncingSales ? <><RefreshCw size={12} className="animate-spin" /> Syncing…</> : !online ? <><CloudOff size={12} /> Sync (offline)</> : posSessionMode === 'offline' ? 'Sign in online to sync' : pendingCount ? 'Sync now →' : <><CheckCircle2 size={12} /> All synced</>}
                 </button>
               </div>
@@ -2265,7 +2434,7 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
 
               <div className="flex flex-col gap-3 border-b border-slate-100 bg-slate-50/50 px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex flex-wrap gap-2" role="tablist" aria-label="Order source">
-                  {([{ id: 'all', label: `All orders (${orderBook.length})` }, { id: 'shop', label: `Shop (${sales.length})` }, { id: 'website', label: `Website (${websiteOrders.length})` }] as const).map(item => <button key={item.id} role="tab" aria-selected={orderBookTab === item.id} onClick={() => setOrderBookTab(item.id)} className={`rounded-lg border px-3 py-2 text-xs font-bold ${orderBookTab === item.id ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}>{item.label}</button>)}
+                  {([{ id: 'all', label: `All orders (${orderBook.length})` }, { id: 'shop', label: `Shop (${sales.length})` }, { id: 'website', label: `Website (${websiteOrders.length})` }] as const).map(item => <button key={item.id} role="tab" aria-selected={orderBookTab === item.id} onClick={() => setOrderBookTab(item.id)} className={`rounded-lg border px-3.5 py-2 text-xs font-bold transition whitespace-nowrap ${orderBookTab === item.id ? 'border-[var(--brand-blue)] bg-[var(--brand-blue-soft)] text-[var(--brand-blue-hover)]' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}>{item.label}</button>)}
                 </div>
                 <label className="pos-search sm:w-64"><Search size={15} /><input value={orderSearch} onChange={e => setOrderSearch(e.target.value)} placeholder="Search order, customer, item…" /></label>
               </div>
@@ -2292,7 +2461,7 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                             <small>{order.items.length} item types</small>
                           </td>
                           <td>
-                            <span className={`pos-method-pill ${order.source === 'website' ? 'bg-violet-50 text-violet-700' : 'bg-blue-50 text-blue-700'}`}>{order.source === 'website' ? 'Website' : 'Shop / POS'}</span>
+                            <span className={`pos-method-pill ${order.source === 'website' ? 'bg-violet-50 text-violet-700' : 'bg-[var(--brand-blue-soft)] text-[var(--brand-blue-hover)]'}`}>{order.source === 'website' ? 'Website' : 'Shop / POS'}</span>
                           </td>
                           <td>
                             <b>{order.customerName}</b>
@@ -2416,7 +2585,7 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                     {p.weight && <small>Weight: {p.weight}</small>}
                     {p.extra && <small>{p.extra}</small>}
                   {p.purchaseBill && (
-                    <a href={p.purchaseBill.dataUrl} download={p.purchaseBill.name} target="_blank" rel="noreferrer" className="text-xs font-semibold text-blue-700 underline">
+                    <a href={p.purchaseBill.dataUrl} download={p.purchaseBill.name} target="_blank" rel="noreferrer" className="text-xs font-semibold text-[var(--brand-blue-hover)] underline">
                       View purchase bill · {p.purchaseBill.name}
                     </a>
                   )}
@@ -2522,7 +2691,29 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                     )}
                   </>
                 ) : (
-                  <p className="pos-help-note">Bills are stored in this app’s encrypted database. In the Windows/Mac app, every invoice is also saved as a PDF under <b>Documents › ollaiBooks › {shop.name} › Invoices</b>.</p>
+                  <div className="space-y-2.5">
+                    <div className="pos-path-row">
+                      <div>
+                        <b>Browser encrypted database (active now)</b>
+                        <code>IndexedDB (origin-isolated browser storage)</code>
+                        <small>You are currently in a web browser. Bills, stock and settings are saved in this browser’s encrypted IndexedDB. Use <b>Back up now</b> to save a file to your Downloads folder.</small>
+                      </div>
+                    </div>
+                    <div className="pos-path-row">
+                      <div>
+                        <b>Desktop App Invoices (Windows / Mac)</b>
+                        <code>{`Documents\\ollaiBooks\\${shop.name || 'My Business'}\\Invoices\\YYYY\\MM-Mon`}</code>
+                        <small>Windows: <code>{`C:\\Users\\<User>\\Documents\\ollaiBooks\\${shop.name || 'My Business'}\\Invoices`}</code> · Mac: <code>{`~/Documents/ollaiBooks/${shop.name || 'My Business'}/Invoices`}</code></small>
+                      </div>
+                    </div>
+                    <div className="pos-path-row">
+                      <div>
+                        <b>Desktop App Daily Backups</b>
+                        <code>{`Documents\\ollaiBooks\\${shop.name || 'My Business'}\\Backups`}</code>
+                        <small>App database (userData) — Windows: <code>%APPDATA%\ollaiBooks</code> · Mac: <code>~/Library/Application Support/ollaiBooks</code></small>
+                      </div>
+                    </div>
+                  </div>
                 )}
               </div>
 
@@ -2610,8 +2801,12 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                         />
                       </label>
                       {shop.logo && (
-                        <button type="button" className="text-xs font-semibold text-rose-600 hover:underline" onClick={() => { setShop(prev => ({ ...prev, logo: undefined })); recordAudit('logo.updated', 'Logo removed'); notify('info', 'Logo removed', 'Bills will show your store initial instead.'); }}>
-                          Remove
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-3 py-2 text-xs font-semibold text-rose-600 transition hover:bg-rose-50 flex-none"
+                          onClick={() => { setShop(prev => ({ ...prev, logo: undefined })); recordAudit('logo.updated', 'Logo removed'); notify('info', 'Logo removed', 'Bills will show your store initial instead.'); }}
+                        >
+                          <Trash2 size={13} /> Remove
                         </button>
                       )}
                     </div>
@@ -2709,14 +2904,18 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                 </div>
 
                 <div className="pos-subheading">Invoice &amp; payment details</div>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto]">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto_auto]">
                   <label>
                     UPI ID <span className="pos-label-muted">(printed so customers can pay)</span>
                     <input value={shop.upiId || ''} onChange={e => setShop({ ...shop, upiId: e.target.value.trim() })} placeholder="yourstore@okaxis" />
                   </label>
                   <label>
-                    Invoice colour
-                    <input type="color" className="pos-color-input" value={shop.brandColor || '#1d4ed8'} onChange={e => setShop({ ...shop, brandColor: e.target.value })} />
+                    Primary colour
+                    <input type="color" className="pos-color-input" value={shop.brandColor || '#2563eb'} onChange={e => setShop({ ...shop, brandColor: e.target.value })} />
+                  </label>
+                  <label>
+                    Secondary colour
+                    <input type="color" className="pos-color-input" value={shop.secondaryColor || '#64748b'} onChange={e => setShop({ ...shop, secondaryColor: e.target.value })} />
                   </label>
                 </div>
                 <label>
@@ -2877,6 +3076,63 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                       <small>Sample bill with your logo, GSTIN and settings. Real bills use the customer’s details.</small>
                     </div>
                   )}
+                </div>
+
+                {/* App Theme & Colours Card */}
+                <div className="pos-data-card pos-settings-card">
+                  <div className="pos-data-heading">
+                    <div>
+                      <h2>App Theme &amp; Colours</h2>
+                      <span>Try new colour themes or customize the billing app</span>
+                    </div>
+                    <Palette size={20} />
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {APP_THEME_PRESETS.map((preset) => {
+                      const active =
+                        (shop.appAccentColor || '#2563eb').toLowerCase() === preset.accent &&
+                        (shop.appSurfaceColor || '#f1f5f9').toLowerCase() === preset.surface;
+                      return (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          onClick={() => setShop({ ...shop, appAccentColor: preset.accent, appSurfaceColor: preset.surface, appSidebarColor: preset.sidebar })}
+                          className={`inline-flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${
+                            active ? 'border-[var(--brand-blue)] bg-[var(--brand-blue-soft)] text-[var(--brand-blue-hover)]' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                          }`}
+                        >
+                          <span className="inline-flex items-center gap-1">
+                            <span className="h-3 w-3 rounded-full border border-black/10" style={{ background: preset.accent }} />
+                            <span className="h-3 w-3 rounded-full border border-slate-300" style={{ background: preset.surface }} />
+                          </span>
+                          {preset.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 pt-1">
+                    <label>
+                      App accent
+                      <input type="color" className="pos-color-input" value={safeHex(shop.appAccentColor, '#2563eb')} onChange={e => setShop({ ...shop, appAccentColor: e.target.value })} />
+                    </label>
+                    <label>
+                      Background tint
+                      <input type="color" className="pos-color-input" value={safeHex(shop.appSurfaceColor, '#f1f5f9')} onChange={e => setShop({ ...shop, appSurfaceColor: e.target.value })} />
+                    </label>
+                    <label>
+                      Sidebar colour
+                      <input type="color" className="pos-color-input" value={safeHex(shop.appSidebarColor, '#ffffff')} onChange={e => setShop({ ...shop, appSidebarColor: e.target.value })} />
+                    </label>
+                  </div>
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      className="pos-secondary-action"
+                      onClick={() => setShop({ ...shop, appAccentColor: '#2563eb', appSurfaceColor: '#f1f5f9', appSidebarColor: '#ffffff' })}
+                    >
+                      Reset to Blue &amp; Silver
+                    </button>
+                  </div>
                 </div>
 
                 {/* Offline Security & Counter PIN Lock Card */}
@@ -3074,7 +3330,7 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
             }}
             className="w-full max-w-sm rounded-2xl border border-slate-800 bg-slate-900 p-6 text-white shadow-2xl"
           >
-            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-blue-600/20 text-blue-400 border border-blue-500/30">
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--brand-blue-soft)] text-[var(--brand-blue)] border border-[var(--brand-blue-border)]">
               <Lock size={22} />
             </div>
             <h2 className="text-center text-lg font-extrabold">Counter Terminal Locked</h2>
@@ -3089,12 +3345,12 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
               value={pinInput}
               onChange={e => { setPinInput(e.target.value.replace(/\D/g, '')); setPinError(''); }}
               placeholder="••••"
-              className="mt-5 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-center text-2xl font-bold tracking-[0.5em] text-white focus:border-blue-500 focus:outline-none"
+              className="mt-5 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-center text-2xl font-bold tracking-[0.5em] text-white focus:border-[var(--brand-blue)] focus:outline-none"
             />
             {pinError && <p className="mt-2 text-center text-xs font-semibold text-rose-400">{pinError}</p>}
             <button
               type="submit"
-              className="mt-4 w-full rounded-xl bg-blue-600 py-3 text-sm font-bold text-white hover:bg-blue-700 transition"
+              className="mt-4 w-full rounded-xl bg-[var(--brand-blue)] py-3 text-sm font-bold text-white hover:bg-[var(--brand-blue-hover)] transition"
             >
               Unlock Workspace
             </button>
@@ -3169,7 +3425,7 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                   <button
                     type="button"
                     onClick={() => printReceipt(completedSale)}
-                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-xs font-bold text-white shadow-sm hover:bg-blue-700 transition"
+                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-[var(--brand-blue)] px-4 py-3 text-xs font-bold text-white shadow-sm hover:bg-[var(--brand-blue-hover)] transition"
                   >
                     <Receipt size={16} /> Generate Bill ({invoiceTemplate === 'thermal' ? paperWidth : invoiceTemplate === 'classic-gst' ? 'Classic A4' : 'Modern A4'})
                   </button>
@@ -3209,7 +3465,7 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                       onClick={() => setInvoiceTemplate(tpl.id)}
                       className={`rounded-lg border p-2 text-left transition ${
                         invoiceTemplate === tpl.id
-                          ? 'border-blue-600 bg-blue-50 text-blue-900 ring-1 ring-blue-600'
+                          ? 'border-[var(--brand-blue)] bg-[var(--brand-blue-soft)] text-[var(--ink)] ring-1 ring-[var(--brand-blue)]'
                           : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
                       }`}
                     >
@@ -3235,20 +3491,59 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
       )}
 
       {calculatorOpen && (
-        <div className="pos-modal-overlay fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setCalculatorOpen(false); }}>
-          <section role="dialog" aria-modal="true" aria-labelledby="pos-calculator-title" className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
-            <div className="mb-4 flex items-center justify-between">
-              <h2 id="pos-calculator-title" className="flex items-center gap-2 text-base font-bold text-slate-900"><Calculator size={18} className="text-blue-600" /> Calculator</h2>
-              <button type="button" onClick={() => setCalculatorOpen(false)} aria-label="Close calculator" className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"><X size={18} /></button>
+        <div className="pos-modal-overlay fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-[2px] p-4" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setCalculatorOpen(false); }}>
+          <section role="dialog" aria-modal="true" aria-labelledby="pos-calculator-title" className="w-full max-w-[340px] rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
+            <div className="mb-3.5 flex items-center justify-between">
+              <h2 id="pos-calculator-title" className="flex items-center gap-2 text-sm font-bold text-slate-900">
+                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--brand-blue-soft)] text-[var(--brand-blue)]">
+                  <Calculator size={15} />
+                </span>
+                Quick Calculator
+              </h2>
+              <button type="button" onClick={() => setCalculatorOpen(false)} aria-label="Close calculator" className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 transition"><X size={17} /></button>
             </div>
-            <output aria-live="polite" className="mb-3 block min-h-16 overflow-hidden rounded-xl bg-slate-950 px-4 py-3 text-right text-3xl font-semibold text-white">{calculatorDisplay}</output>
+            <div className="mb-3.5 rounded-xl border border-slate-200 bg-[var(--silver-soft)] px-4 py-3">
+              <div className="mb-1.5 flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => { void navigator.clipboard?.writeText(calculatorDisplay); notify('info', 'Copied', `${calculatorDisplay} copied to clipboard.`); }}
+                  className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-600 hover:border-[var(--brand-blue-border)] hover:text-[var(--brand-blue-hover)] transition flex-none"
+                  title="Copy result"
+                >
+                  <Copy size={11} /> Copy
+                </button>
+                <span className="truncate text-right text-sm font-semibold text-slate-700 tabular-nums">
+                  {calculatorAccumulator !== null && calculatorOperator
+                    ? (calculatorReplaceDisplay ? `${calculatorAccumulator} ${calculatorOperator}` : `${calculatorAccumulator} ${calculatorOperator} ${calculatorDisplay}`)
+                    : calculatorHistory || 'Ready'}
+                </span>
+              </div>
+              <output aria-live="polite" className="block overflow-hidden text-ellipsis whitespace-nowrap text-right text-3xl font-bold tracking-tight text-slate-900 tabular-nums">{calculatorDisplay}</output>
+            </div>
             <div className="grid grid-cols-4 gap-2">
-              {['C', '⌫', '÷', '×', '7', '8', '9', '−', '4', '5', '6', '+', '1', '2', '3', '0', '.', '='].map((key, index) => {
-                const operator = ['÷', '×', '−', '+', '='].includes(key);
-                return <button key={`${key}-${index}`} type="button" onClick={() => calculatorPress(key)} className={`min-h-12 rounded-xl text-base font-bold transition active:scale-95 ${key === '=' ? 'bg-blue-600 text-white hover:bg-blue-700' : operator ? 'bg-blue-50 text-blue-700 hover:bg-blue-100' : key === 'C' ? 'bg-rose-50 text-rose-700 hover:bg-rose-100' : 'bg-slate-100 text-slate-800 hover:bg-slate-200'} ${key === '0' ? 'col-span-2' : ''}`}>{key}</button>;
+              {['C', '⌫', '%', '÷', '7', '8', '9', '×', '4', '5', '6', '−', '1', '2', '3', '+', '00', '0', '.', '='].map((key, index) => {
+                const operator = ['%', '÷', '×', '−', '+'].includes(key);
+                return (
+                  <button
+                    key={`${key}-${index}`}
+                    type="button"
+                    onClick={() => calculatorPress(key)}
+                    className={`min-h-11 rounded-xl border text-sm font-bold transition active:scale-95 ${
+                      key === '='
+                        ? 'border-[var(--brand-blue)] bg-[var(--brand-blue)] text-white shadow-sm hover:bg-[var(--brand-blue-hover)]'
+                        : operator
+                          ? 'border-[var(--brand-blue-border)] bg-[var(--brand-blue-soft)] text-[var(--brand-blue-hover)] hover:bg-[var(--brand-blue-border)]'
+                          : key === 'C'
+                            ? 'border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100'
+                            : 'border-slate-200 bg-white text-slate-800 hover:bg-slate-50'
+                    }`}
+                  >
+                    {key}
+                  </button>
+                );
               })}
             </div>
-            <p className="mt-3 text-center text-xs text-slate-500">Quick calculations stay separate from your bill totals.</p>
+            <p className="mt-3 text-center text-[11px] text-slate-500">Quick calculations stay separate from your bill totals.</p>
           </section>
         </div>
       )}
@@ -3269,13 +3564,13 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
             {/* Modal Header */}
             <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 bg-slate-50/50">
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 text-white shadow-md shadow-blue-500/20">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--brand-blue)] text-white shadow-md shadow-slate-900/10">
                   <Download size={20} />
                 </div>
                 <div>
                   <h2 id="pos-native-modal-title" className="text-base font-extrabold text-slate-900 flex items-center gap-2">
                     ollaiBooks App Downloads
-                    <span className="rounded-full bg-blue-100 text-blue-700 text-[10px] font-bold px-2 py-0.5">OFFLINE POS</span>
+                    <span className="rounded-full bg-[var(--brand-blue-soft)] text-[var(--brand-blue-hover)] text-[10px] font-bold px-2 py-0.5">OFFLINE POS</span>
                   </h2>
                   <p className="text-xs text-slate-500">
                     Download the installer for your device. Available files are linked directly from the latest release.
@@ -3307,18 +3602,18 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                   </div>
                   <button
                     onClick={triggerDirectInstall}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-white px-4 py-2 text-xs font-bold text-blue-700 shadow hover:bg-blue-50 active:scale-95 transition-all whitespace-nowrap"
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-white px-4 py-2 text-xs font-bold text-[var(--brand-blue-hover)] shadow hover:bg-[var(--brand-blue-soft)] active:scale-95 transition-all whitespace-nowrap"
                   >
                     <Sparkles size={14} /> Install App Now
                   </button>
                 </div>
               ) : installEnvironment === 'ios-browser' ? (
-                <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-blue-950">
+                <div className="rounded-xl border border-[var(--brand-blue-border)] bg-[var(--brand-blue-soft)] p-4 text-blue-950">
                   <p className="text-sm font-bold">Add ollaiBooks to your Home Screen</p>
                   <p className="mt-1 text-xs">In Safari, tap Share, choose Add to Home Screen, then tap Add. iOS does not provide a website-triggered install prompt.</p>
                 </div>
               ) : (
-                <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-blue-950">
+                <div className="rounded-xl border border-[var(--brand-blue-border)] bg-[var(--brand-blue-soft)] p-4 text-blue-950">
                   <p className="text-sm font-bold">Install from your browser</p>
                   <p className="mt-1 text-xs">Choose Install app from your browser menu or address bar. Installation options vary by browser and device.</p>
                 </div>
@@ -3340,28 +3635,28 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
               <button
                 type="button"
                 onClick={() => setActivePlatformTab('android')}
-                className={`pb-3 px-3 border-b-2 flex items-center gap-1.5 whitespace-nowrap transition ${activePlatformTab === 'android' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+                className={`pb-3 px-3 border-b-2 flex items-center gap-1.5 whitespace-nowrap transition ${activePlatformTab === 'android' ? 'border-[var(--brand-blue)] text-[var(--brand-blue)]' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
               >
                 <Smartphone size={15} /> Android (APK)
               </button>
               <button
                 type="button"
                 onClick={() => setActivePlatformTab('windows')}
-                className={`pb-3 px-3 border-b-2 flex items-center gap-1.5 whitespace-nowrap transition ${activePlatformTab === 'windows' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+                className={`pb-3 px-3 border-b-2 flex items-center gap-1.5 whitespace-nowrap transition ${activePlatformTab === 'windows' ? 'border-[var(--brand-blue)] text-[var(--brand-blue)]' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
               >
                 <Monitor size={15} /> Windows (.EXE)
               </button>
               <button
                 type="button"
                 onClick={() => setActivePlatformTab('mac')}
-                className={`pb-3 px-3 border-b-2 flex items-center gap-1.5 whitespace-nowrap transition ${activePlatformTab === 'mac' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+                className={`pb-3 px-3 border-b-2 flex items-center gap-1.5 whitespace-nowrap transition ${activePlatformTab === 'mac' ? 'border-[var(--brand-blue)] text-[var(--brand-blue)]' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
               >
                 <Laptop size={15} /> macOS (.DMG)
               </button>
               <button
                 type="button"
                 onClick={() => setActivePlatformTab('ios')}
-                className={`pb-3 px-3 border-b-2 flex items-center gap-1.5 whitespace-nowrap transition ${activePlatformTab === 'ios' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+                className={`pb-3 px-3 border-b-2 flex items-center gap-1.5 whitespace-nowrap transition ${activePlatformTab === 'ios' ? 'border-[var(--brand-blue)] text-[var(--brand-blue)]' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
               >
                 <Store size={15} /> iPad &amp; iPhone
               </button>
@@ -3374,14 +3669,14 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                   <p className="font-semibold text-slate-800">{nativeDownloads?.release ? `Latest release: ${nativeDownloads.release.name}` : nativeDownloads?.unavailable ? 'Download status is temporarily unavailable' : 'Checking published downloads…'}</p>
                   <p className="mt-0.5 text-slate-600">Download buttons appear only for installers that have actually been published.</p>
                 </div>
-                {nativeDownloads?.release && <a href={nativeDownloads.release.url} target="_blank" rel="noopener noreferrer" className="font-semibold text-blue-700 hover:underline">Release notes</a>}
+                {nativeDownloads?.release && <a href={nativeDownloads.release.url} target="_blank" rel="noopener noreferrer" className="font-semibold text-[var(--brand-blue-hover)] hover:underline">Release notes</a>}
               </div>
 
               {activePlatformTab === 'android' && (
                 <div className="space-y-4">
                   {nativeDownloads?.downloads.android ? (
-                    <a href={nativeDownloads.downloads.android.url} className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-5 shadow-sm hover:border-blue-300 hover:shadow-md">
-                      <span><strong className="block text-sm text-slate-900">ollaiBooks for Android</strong><span className="mt-1 block text-slate-500">APK installer · {nativeDownloads.downloads.android.name}</span></span><span className="rounded-lg bg-blue-600 px-4 py-2.5 font-bold text-white">Download APK</span>
+                    <a href={nativeDownloads.downloads.android.url} className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-5 shadow-sm hover:border-[var(--brand-blue-border)] hover:shadow-md">
+                      <span><strong className="block text-sm text-slate-900">ollaiBooks for Android</strong><span className="mt-1 block text-slate-500">APK installer · {nativeDownloads.downloads.android.name}</span></span><span className="rounded-lg bg-[var(--brand-blue)] px-4 py-2.5 font-bold text-white">Download APK</span>
                     </a>
                   ) : <div className="rounded-xl border border-slate-200 bg-white p-5"><h3 className="text-sm font-bold text-slate-900">Android app installer</h3><p className="mt-2 text-slate-600">An APK download will show here after it is included in a published release. For now, open ollaiBooks in Chrome and choose <strong>Install app</strong> from the browser menu.</p></div>}
                 </div>
@@ -3390,8 +3685,8 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
               {activePlatformTab === 'windows' && (
                 <div className="space-y-4">
                   {nativeDownloads?.downloads.windows ? (
-                    <a href={nativeDownloads.downloads.windows.url} className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-5 shadow-sm hover:border-blue-300 hover:shadow-md">
-                      <span><strong className="block text-sm text-slate-900">ollaiBooks for Windows</strong><span className="mt-1 block text-slate-500">Windows installer · {nativeDownloads.downloads.windows.name}</span></span><span className="rounded-lg bg-blue-600 px-4 py-2.5 font-bold text-white">Download EXE</span>
+                    <a href={nativeDownloads.downloads.windows.url} className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-5 shadow-sm hover:border-[var(--brand-blue-border)] hover:shadow-md">
+                      <span><strong className="block text-sm text-slate-900">ollaiBooks for Windows</strong><span className="mt-1 block text-slate-500">Windows installer · {nativeDownloads.downloads.windows.name}</span></span><span className="rounded-lg bg-[var(--brand-blue)] px-4 py-2.5 font-bold text-white">Download EXE</span>
                     </a>
                   ) : <div className="rounded-xl border border-slate-200 bg-white p-5"><h3 className="text-sm font-bold text-slate-900">Windows installer</h3><p className="mt-2 text-slate-600">The Windows installer will be available here after the first native release is published.</p></div>}
                 </div>
@@ -3400,8 +3695,8 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
               {activePlatformTab === 'mac' && (
                 <div className="space-y-4">
                   {nativeDownloads?.downloads.mac ? (
-                    <a href={nativeDownloads.downloads.mac.url} className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-5 shadow-sm hover:border-blue-300 hover:shadow-md">
-                      <span><strong className="block text-sm text-slate-900">ollaiBooks for macOS</strong><span className="mt-1 block text-slate-500">Disk image · {nativeDownloads.downloads.mac.name}</span></span><span className="rounded-lg bg-blue-600 px-4 py-2.5 font-bold text-white">Download DMG</span>
+                    <a href={nativeDownloads.downloads.mac.url} className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-5 shadow-sm hover:border-[var(--brand-blue-border)] hover:shadow-md">
+                      <span><strong className="block text-sm text-slate-900">ollaiBooks for macOS</strong><span className="mt-1 block text-slate-500">Disk image · {nativeDownloads.downloads.mac.name}</span></span><span className="rounded-lg bg-[var(--brand-blue)] px-4 py-2.5 font-bold text-white">Download DMG</span>
                     </a>
                   ) : <div className="rounded-xl border border-slate-200 bg-white p-5"><h3 className="text-sm font-bold text-slate-900">macOS installer</h3><p className="mt-2 text-slate-600">The macOS disk image will be available after a release is built on macOS. Safari users can also add the web app to the Dock.</p></div>}
                 </div>
@@ -3410,9 +3705,44 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
               {activePlatformTab === 'ios' && (
                 <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-5">
                   <h3 className="text-sm font-bold text-slate-900">Install on iPhone or iPad</h3>
-                  <p className="text-slate-600">iOS does not allow a website to install a standalone app from a direct .ipa download. Install through the App Store or TestFlight when published, or add ollaiBooks to your Home Screen from Safari.</p>
-                  <ol className="list-decimal list-inside space-y-1 text-slate-600"><li>Open the ollaiBooks website in Safari.</li><li>Tap <strong>Share</strong>, then <strong>Add to Home Screen</strong>.</li><li>Tap <strong>Add</strong> to launch ollaiBooks from your Home Screen.</li></ol>
-                  <p className="rounded-lg bg-blue-50 p-3 text-blue-800">App Store and TestFlight links will appear here once Apple distribution is configured.</p>
+                  {(process.env.NEXT_PUBLIC_IOS_APPSTORE_URL || process.env.NEXT_PUBLIC_IOS_TESTFLIGHT_URL) ? (
+                    <div className="space-y-2.5">
+                      {process.env.NEXT_PUBLIC_IOS_APPSTORE_URL && (
+                        <a
+                          href={process.env.NEXT_PUBLIC_IOS_APPSTORE_URL}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-4 shadow-sm hover:border-[var(--brand-blue-border)] hover:shadow-md transition"
+                        >
+                          <span>
+                            <strong className="block text-sm text-slate-900">ollaiBooks for iPhone &amp; iPad</strong>
+                            <span className="mt-0.5 block text-slate-500">Official Apple App Store release</span>
+                          </span>
+                          <span className="rounded-lg bg-[var(--brand-blue)] px-4 py-2 font-bold text-white">App Store</span>
+                        </a>
+                      )}
+                      {process.env.NEXT_PUBLIC_IOS_TESTFLIGHT_URL && (
+                        <a
+                          href={process.env.NEXT_PUBLIC_IOS_TESTFLIGHT_URL}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-4 shadow-sm hover:border-[var(--brand-blue-border)] hover:shadow-md transition"
+                        >
+                          <span>
+                            <strong className="block text-sm text-slate-900">TestFlight Beta (iOS / iPadOS)</strong>
+                            <span className="mt-0.5 block text-slate-500">Early-access native build via Apple TestFlight</span>
+                          </span>
+                          <span className="rounded-lg border border-[var(--brand-blue-border)] bg-[var(--brand-blue-soft)] px-4 py-2 font-bold text-[var(--brand-blue-hover)]">Join TestFlight</span>
+                        </a>
+                      )}
+                    </div>
+                  ) : (
+                    <>
+                      <p className="text-slate-600">iOS does not allow a website to install a standalone app from a direct .ipa download. Install through the App Store or TestFlight when published, or add ollaiBooks to your Home Screen from Safari.</p>
+                      <ol className="list-decimal list-inside space-y-1 text-slate-600"><li>Open the ollaiBooks website in Safari.</li><li>Tap <strong>Share</strong>, then <strong>Add to Home Screen</strong>.</li><li>Tap <strong>Add</strong> to launch ollaiBooks from your Home Screen.</li></ol>
+                      <p className="rounded-lg bg-[var(--brand-blue-soft)] p-3 text-[var(--brand-blue-hover)]">Set <code>NEXT_PUBLIC_IOS_APPSTORE_URL</code> or <code>NEXT_PUBLIC_IOS_TESTFLIGHT_URL</code> after your Xcode / Capacitor build is uploaded to App Store Connect.</p>
+                    </>
+                  )}
                 </div>
               )}
 
@@ -3420,7 +3750,7 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
             {/* Modal Footer */}
             <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50 px-6 py-3.5">
               <span className="text-[11px] text-slate-500">
-                Guide: <span className="font-semibold text-blue-600">docs/NATIVE_APP_CONVERSION_GUIDE.md</span>
+                Guide: <span className="font-semibold text-[var(--brand-blue)]">docs/NATIVE_APP_CONVERSION_GUIDE.md</span>
               </span>
               <button
                 type="button"
@@ -3440,7 +3770,7 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
           <div className="pos-modal-card w-full max-w-2xl max-h-[92vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl animate-in zoom-in-95">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div className="flex items-center gap-2">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-100 text-blue-700">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--brand-blue-soft)] text-[var(--brand-blue-hover)]">
                   <Plus size={18} />
                 </div>
                 <h3 className="text-base font-bold text-slate-900">{editingProductId ? 'Edit Product (Offline)' : 'Add Product (Offline)'}</h3>
@@ -3461,7 +3791,7 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                   value={newProdName}
                   onChange={e => setNewProdName(e.target.value)}
                   placeholder={industry.key === 'salon' ? 'e.g. Haircut, facial, shampoo' : industry.key === 'restaurant' ? 'e.g. Masala dosa, filter coffee' : industry.key === 'bakery' ? 'e.g. Custom birthday cake, croissant' : 'Enter item name'}
-                  className="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-sm font-normal text-slate-900 focus:border-blue-600 focus:outline-none"
+                  className="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-sm font-normal text-slate-900 focus:border-[var(--brand-blue)] focus:outline-none"
                 />
               </label>
 
@@ -3481,7 +3811,7 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                     value={newProdCategory}
                     onChange={e => setNewProdCategory(e.target.value)}
                     placeholder="e.g. Electronics, Retail, Grocery"
-                    className="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-blue-600 focus:outline-none"
+                    className="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-[var(--brand-blue)] focus:outline-none"
                   />
                 </label>
 
@@ -3495,7 +3825,7 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                     value={newProdPrice}
                     onChange={e => setNewProdPrice(e.target.value === '' ? '' : Number(e.target.value))}
                     placeholder="250.00"
-                    className="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-blue-600 focus:outline-none"
+                    className="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-[var(--brand-blue)] focus:outline-none"
                   />
                 </label>
               </div>
@@ -3503,7 +3833,7 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
               <div className="grid grid-cols-2 gap-3">
                 <label className="block font-semibold text-slate-700">
                   Selling unit
-                  <select value={newProdUnit} onChange={e => setNewProdUnit(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-blue-600 focus:outline-none">
+                  <select value={newProdUnit} onChange={e => setNewProdUnit(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-[var(--brand-blue)] focus:outline-none">
                     <option value="pcs">Pieces / quantity</option>
                     <option value="kg">Kilograms (kg)</option>
                     <option value="g">Grams (g)</option>
@@ -3514,29 +3844,29 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                 </label>
                 <label className="block font-semibold text-slate-700">
                   Purchase date
-                  <input type="date" value={newProdPurchaseDate} onChange={e => setNewProdPurchaseDate(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-blue-600 focus:outline-none" />
+                  <input type="date" value={newProdPurchaseDate} onChange={e => setNewProdPurchaseDate(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-[var(--brand-blue)] focus:outline-none" />
                 </label>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <label className="block font-semibold text-slate-700">
                   Purchase cost (₹)
-                  <input type="number" min="0" step="0.01" value={newProdPurchasePrice} onChange={e => setNewProdPurchasePrice(e.target.value === '' ? '' : Number(e.target.value))} placeholder="Cost per selling unit" className="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-blue-600 focus:outline-none" />
+                  <input type="number" min="0" step="0.01" value={newProdPurchasePrice} onChange={e => setNewProdPurchasePrice(e.target.value === '' ? '' : Number(e.target.value))} placeholder="Cost per selling unit" className="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-[var(--brand-blue)] focus:outline-none" />
                 </label>
                 <label className="block font-semibold text-slate-700">
                   Weight / pack size
-                  <input value={newProdWeight} onChange={e => setNewProdWeight(e.target.value)} placeholder="e.g. 500 g, 1 kg cake" className="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-blue-600 focus:outline-none" />
+                  <input value={newProdWeight} onChange={e => setNewProdWeight(e.target.value)} placeholder="e.g. 500 g, 1 kg cake" className="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-[var(--brand-blue)] focus:outline-none" />
                 </label>
               </div>
 
               <label className="block font-semibold text-slate-700">
                 Extra details
-                <textarea rows={2} maxLength={1000} value={newProdExtra} onChange={e => setNewProdExtra(e.target.value)} placeholder="Supplier, batch, expiry, flavor, or other notes" className="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-blue-600 focus:outline-none" />
+                <textarea rows={2} maxLength={1000} value={newProdExtra} onChange={e => setNewProdExtra(e.target.value)} placeholder="Supplier, batch, expiry, flavor, or other notes" className="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-[var(--brand-blue)] focus:outline-none" />
               </label>
 
               <label className="block font-semibold text-slate-700">
                 Upload purchase bill <span className="font-normal text-slate-400">(PDF, image; up to 8 MB; stored on this device)</span>
-                <input type="file" accept="application/pdf,image/*" onChange={e => { void handlePurchaseBillUpload(e.target.files?.[0]).catch(error => setToast(error.message || 'Could not read purchase bill.')); }} className="mt-1 block w-full text-xs text-slate-500 file:mr-3 file:rounded-md file:border-0 file:bg-blue-50 file:px-3 file:py-2 file:text-xs file:font-semibold file:text-blue-700 hover:file:bg-blue-100" />
+                <input type="file" accept="application/pdf,image/*" onChange={e => { void handlePurchaseBillUpload(e.target.files?.[0]).catch(error => setToast(error.message || 'Could not read purchase bill.')); }} className="mt-1 block w-full text-xs text-slate-500 file:mr-3 file:rounded-md file:border-0 file:bg-[var(--brand-blue-soft)] file:px-3 file:py-2 file:text-xs file:font-semibold file:text-[var(--brand-blue-hover)] hover:file:bg-[var(--brand-blue-border)]" />
                 {newProdBill && <span className="mt-1 flex items-center gap-2 text-xs text-emerald-700">Attached: {newProdBill.name}<button type="button" onClick={() => setNewProdBill(undefined)} className="font-semibold text-rose-700 underline">Remove</button></span>}
               </label>
 
@@ -3549,7 +3879,7 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                     value={newProdStock}
                     onChange={e => setNewProdStock(e.target.value === '' ? '' : Number(e.target.value))}
                     placeholder="50"
-                    className="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-blue-600 focus:outline-none"
+                    className="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-[var(--brand-blue)] focus:outline-none"
                   />
                 </label>}
 
@@ -3559,7 +3889,7 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                     value={newProdHsn}
                     onChange={e => setNewProdHsn(e.target.value)}
                     placeholder="180690"
-                    className="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-blue-600 focus:outline-none"
+                    className="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-xs text-slate-900 focus:border-[var(--brand-blue)] focus:outline-none"
                   />
                 </label>
               </div>
@@ -3586,7 +3916,7 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                       onClick={() => setNewProdEmoji(key)}
                       className={`flex h-9 w-9 items-center justify-center rounded-lg border transition ${
                         newProdEmoji === key
-                          ? 'border-blue-600 bg-blue-50 text-blue-700'
+                          ? 'border-[var(--brand-blue)] bg-[var(--brand-blue-soft)] text-[var(--brand-blue-hover)]'
                           : 'border-slate-200 text-slate-600 hover:bg-slate-50'
                       }`}
                     >
@@ -3606,7 +3936,7 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
                 </button>
                 <button
                   type="submit"
-                  className="rounded-lg bg-blue-600 px-5 py-2 font-bold text-white shadow-md shadow-blue-500/20 hover:bg-blue-700"
+                  className="rounded-lg bg-[var(--brand-blue)] px-5 py-2 font-bold text-white shadow-md shadow-slate-900/10 hover:bg-[var(--brand-blue-hover)]"
                 >
                   {editingProductId ? 'Save Changes Offline' : 'Save Product Offline'}
                 </button>
@@ -3642,7 +3972,7 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
               </label>
               <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
                 <button type="button" onClick={() => setStockModalProduct(null)} className="rounded-lg px-4 py-2 font-semibold text-slate-600 hover:bg-slate-100">Cancel</button>
-                <button type="submit" className="rounded-lg bg-blue-600 px-4 py-2 font-bold text-white hover:bg-blue-700">Save movement offline</button>
+                <button type="submit" className="rounded-lg bg-[var(--brand-blue)] px-4 py-2 font-bold text-white hover:bg-[var(--brand-blue-hover)]">Save movement offline</button>
               </div>
             </form>
             <div className="mt-5">
@@ -3687,16 +4017,16 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
               </p>
 
               {/* Sample Template Download */}
-              <div className="flex items-center justify-between rounded-xl border border-blue-200 bg-blue-50/70 p-3.5">
+              <div className="flex items-center justify-between rounded-xl border border-[var(--brand-blue-border)] bg-[var(--brand-blue-soft)] p-3.5">
                 <div>
-                  <b className="text-blue-900 text-xs">Need a starting template?</b>
-                  <p className="text-[11px] text-blue-700 mt-0.5">
+                  <b className="text-[var(--ink)] text-xs">Need a starting template?</b>
+                  <p className="text-[11px] text-[var(--brand-blue-hover)] mt-0.5">
                   Columns: Name, Category, Price, Stock, Unit, Purchase Date, Purchase Price, Weight, Extra, HSN
                   </p>
                 </div>
                 <button
                   onClick={downloadSampleTemplate}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 font-bold text-white shadow-xs hover:bg-blue-700"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--brand-blue)] px-3 py-1.5 font-bold text-white shadow-xs hover:bg-[var(--brand-blue-hover)]"
                 >
                   <Download size={13} />
                   <span>Sample CSV</span>
@@ -3704,7 +4034,7 @@ Device Screen Guard Installation,Services,299,999,service,2026-11-25,80,Standard
               </div>
 
               {/* File Upload Box */}
-              <label className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-300 p-8 text-center cursor-pointer hover:border-blue-500 hover:bg-blue-50/30 transition">
+              <label className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-300 p-8 text-center cursor-pointer hover:border-[var(--brand-blue)] hover:bg-[var(--brand-blue-soft)] transition">
                 <Upload size={32} className="text-slate-400 mb-2" />
                 <span className="font-bold text-sm text-slate-800">
                   Select CSV / Excel file

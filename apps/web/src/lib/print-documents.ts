@@ -27,6 +27,7 @@ export interface PrintableShop {
   fssai?: string;
   gstRegistration?: GstRegistrationType;
   brandColor?: string;
+  secondaryColor?: string;
 }
 
 export interface PrintableSale {
@@ -276,47 +277,56 @@ function kotNumberFrom(orderNumber: string) {
 
 function buildKotSectionHtml(order: any, shopName?: string) {
   const orderNumber = order.orderNumber || order.number || 'Offline order';
+  const kotNo = kotNumberFrom(orderNumber);
   const when = order.orderDate || order.date || new Date().toISOString();
   const customerName = typeof order.customer === 'string' ? order.customer : (order.customer?.name || 'Walk-in');
   const sourceLabel = order.website?.name || order.orderType || order.source || 'Counter';
   const items = Array.isArray(order.items) ? order.items : [];
   const totalQty = items.reduce((s: number, i: any) => s + Number(i.quantity || 0), 0);
 
-  const rows = items.map((item: any) => `
-    <tr>
-      <td class="kq">${escapeHtml(item.quantity)}</td>
-      <td class="kn">
-        ${escapeHtml(item.name)}
-        ${item.note ? `<small>↳ ${escapeHtml(item.note)}</small>` : ''}
-        ${item.sku ? `<small>SKU ${escapeHtml(item.sku)}</small>` : ''}
-      </td>
-    </tr>
-  `).join('');
+  const rows = items.map((item: any) => {
+    const subParts = [
+      item.note ? `Note: ${escapeHtml(item.note)}` : '',
+      item.sku ? `SKU: ${escapeHtml(item.sku)}` : '',
+    ].filter(Boolean);
+    return `
+      <tr>
+        <td>
+          <div class="item-name">${escapeHtml(item.name)}</div>
+          ${subParts.length ? `<div class="item-sub">${subParts.join(' · ')}</div>` : ''}
+        </td>
+        <td class="right"><b>${escapeHtml(item.quantity)} ×</b></td>
+      </tr>
+    `;
+  }).join('');
 
   return `
-    <div class="kot">
-      <div class="kot-head">
-        ${shopName ? `<div class="kot-shop">${escapeHtml(shopName)}</div>` : ''}
-        <div class="kot-title">KITCHEN ORDER TICKET</div>
+    <div class="receipt">
+      <header>
+        <h1>${escapeHtml(shopName || 'KITCHEN ORDER')}</h1>
+        <div class="doc-title">KOT · #${escapeHtml(kotNo)}</div>
+      </header>
+      <div class="meta">
+        <div><span>KOT No</span><b>#${escapeHtml(kotNo)}</b></div>
+        <div><span>Bill Ref</span><b>${escapeHtml(orderNumber)}</b></div>
+        <div><span>Date</span><span>${escapeHtml(formatDate(when))} ${escapeHtml(formatTime(when))}</span></div>
+        <div><span>Customer</span><span>${escapeHtml(customerName)}</span></div>
+        <div><span>Order</span><span>${escapeHtml(sourceLabel)}${order.tableNumber ? ` · Table ${escapeHtml(order.tableNumber)}` : ''}</span></div>
       </div>
-      <div class="kot-token">
-        <div><span>KOT</span><b>#${escapeHtml(kotNumberFrom(orderNumber))}</b></div>
-        ${order.tableNumber ? `<div><span>TABLE</span><b>${escapeHtml(order.tableNumber)}</b></div>` : `<div><span>TYPE</span><b class="sm">${escapeHtml(sourceLabel)}</b></div>`}
-      </div>
-      <div class="kot-meta">
-        <div><span>Bill ref</span><b>${escapeHtml(orderNumber)}</b></div>
-        ${order.tableNumber ? `<div><span>Type</span><b>${escapeHtml(sourceLabel)}</b></div>` : ''}
-        <div><span>Guest</span><b>${escapeHtml(customerName)}</b></div>
-        <div><span>Time</span><b>${escapeHtml(formatTime(when))} · ${escapeHtml(formatDate(when))}</b></div>
-      </div>
-      <table class="kot-items">
-        <thead><tr><th>QTY</th><th>ITEM</th></tr></thead>
+      <table class="items">
+        <thead><tr><th>Item</th><th class="right">Qty</th></tr></thead>
         <tbody>${rows || '<tr><td colspan="2">No items listed.</td></tr>'}</tbody>
       </table>
-      <div class="kot-count">${items.length} item${items.length === 1 ? '' : 's'} · ${totalQty} qty</div>
-      ${order.note ? `<div class="kot-note"><b>CHEF NOTE</b>${escapeHtml(order.note)}</div>` : ''}
-      ${order.pickup ? `<div class="kot-note"><b>PICKUP</b>${escapeHtml(order.pickup)}</div>` : ''}
-      <div class="kot-foot">Kitchen copy · not a tax invoice</div>
+      <div class="totals">
+        <div class="grand"><span>TOTAL QTY</span><span>${escapeHtml(totalQty)} (${items.length} item${items.length === 1 ? '' : 's'})</span></div>
+      </div>
+      ${order.note ? `<div class="words">Note: ${escapeHtml(order.note)}</div>` : ''}
+      ${order.pickup ? `<div class="words">Pickup / Due: ${escapeHtml(order.pickup)}</div>` : ''}
+      <div class="decl">Kitchen / Counter Copy · Not a Tax Invoice</div>
+      <footer>
+        <p class="thanks">Prepare order promptly</p>
+        <p class="tiny">E. &amp; O.E. · Billed with ollaiBooks</p>
+      </footer>
     </div>
   `;
 }
@@ -526,38 +536,45 @@ function buildHsnSummary(sale: PrintableSale, breakup: GstBreakup) {
     </table>`;
 }
 
-function a4BaseCss(accent: string) {
+function safeHexColor(value: string | undefined, fallback: string) {
+  return value && /^#[0-9a-fA-F]{6}$/.test(value.trim()) ? value.trim() : fallback;
+}
+
+function a4BaseCss(primary: string, secondary: string) {
   return `
+    @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap');
     @page{size:A4;margin:10mm}
     *{box-sizing:border-box}
     html,body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-    body{font:11.5px/1.45 'Segoe UI',-apple-system,BlinkMacSystemFont,Roboto,Arial,sans-serif;color:#0f172a;margin:0;background:#f1f5f9}
-    .sheet{max-width:794px;margin:16px auto;background:#fff;box-shadow:0 10px 40px rgba(15,23,42,.12)}
+    body{font:12px/1.5 'Manrope',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;color:#0f172a;margin:0;background:#f1f5f9;-webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums}
+    .sheet{max-width:794px;margin:16px auto;background:#fff;border:1px solid #cbd5e1;box-shadow:0 10px 32px rgba(15,23,42,.08)}
     @media print{body{background:#fff}.sheet{margin:0;box-shadow:none;max-width:none}}
-    b{font-weight:700}
-    .r{text-align:right}.c{text-align:center}.mut{color:#64748b;font-size:10px}
-    table{width:100%;border-collapse:collapse}
-    .items th,.items td,.hsn th,.hsn td{border:1px solid #cbd5e1;padding:5px 6px;vertical-align:top}
-    .items th,.hsn th{background:${accent}12;color:#1e293b;font-size:9.5px;text-transform:uppercase;letter-spacing:.4px;font-weight:700}
-    .items th.sub,.hsn th.sub{font-size:8.5px}
-    .items tbody tr:nth-child(even) td{background:#fafbfd}
-    .items tfoot td{background:#f1f5f9;font-weight:700}
+    b{font-weight:600}
+    .r{text-align:right;white-space:nowrap}.c{text-align:center}.mut{color:#64748b;font-size:10px}
+    table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+    .items th,.items td,.hsn th,.hsn td{border:1px solid #cbd5e1;padding:7px 8px;vertical-align:top}
+    .items th,.hsn th{background:#f1f5f9;color:#1e293b;font-size:9.5px;text-transform:uppercase;letter-spacing:.45px;font-weight:600;border-bottom:2px solid ${primary};vertical-align:middle}
+    .items th.sub,.hsn th.sub{font-size:8.5px;background:#f8fafc;color:${secondary};padding:4px 6px}
+    .items tbody tr:nth-child(even) td{background:#f8fafc}
+    .items tfoot td{background:#f1f5f9;font-weight:600;color:#0f172a;border-top:1.5px solid ${secondary}}
     .hsn{margin-top:10px;font-size:10.5px}
-    .words{margin-top:10px;padding:8px 10px;border:1px dashed #94a3b8;border-radius:6px;background:#f8fafc}
-    .words span{display:block;font-size:9px;text-transform:uppercase;letter-spacing:.6px;color:#64748b;font-weight:700}
-    .bottom{display:grid;grid-template-columns:1.25fr 1fr;gap:12px;margin-top:12px}
-    .panel{border:1px solid #e2e8f0;border-radius:8px;padding:9px 11px}
-    .panel h4{margin:0 0 4px;font-size:9.5px;text-transform:uppercase;letter-spacing:.6px;color:#64748b}
-    .panel p{margin:2px 0;white-space:pre-line}
-    .sum div{display:flex;justify-content:space-between;padding:3px 0}
-    .sum .grand{margin-top:5px;padding:8px 10px;border-radius:6px;background:${accent};color:#fff;font-size:14px;font-weight:800}
+    .words{margin-top:10px;padding:9px 12px;border:1px dashed ${secondary};border-radius:8px;background:#f8fafc}
+    .words span{display:block;font-size:9px;text-transform:uppercase;letter-spacing:.6px;color:${secondary};font-weight:600;margin-bottom:2px}
+    .bottom{display:grid;grid-template-columns:1.2fr 1fr;gap:12px;margin-top:12px;align-items:stretch}
+    .panel{border:1px solid #cbd5e1;border-radius:8px;padding:11px 13px;background:#fff}
+    .panel h4{margin:0 0 6px;font-size:9.5px;text-transform:uppercase;letter-spacing:.6px;color:${primary};font-weight:600}
+    .panel p{margin:2px 0;white-space:pre-line;line-height:1.45}
+    .sum{background:#f8fafc;display:flex;flex-direction:column;justify-content:center}
+    .sum div{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:4px 0;border-bottom:1px dashed #e2e8f0}
+    .sum div:last-child{border-bottom:0}
+    .sum .grand{margin-top:6px;padding:9px 12px;border-radius:7px;background:${primary};border-left:5px solid ${secondary};border-bottom:0;color:#fff;font-size:14px;font-weight:700;align-items:center}
     .sign{margin-top:14px;display:flex;justify-content:space-between;align-items:flex-end;gap:16px}
-    .sign .decl{flex:1;font-size:10px;color:#475569}
-    .sign .box{width:220px;text-align:center}
-    .sign .box .space{height:46px}
-    .sign .box .line{border-top:1px solid #334155;padding-top:4px;font-size:10.5px}
-    .tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:9px;font-weight:700;letter-spacing:.6px;text-transform:uppercase}
-    .brandfoot{margin-top:10px;padding-top:8px;border-top:1px dashed #cbd5e1;display:flex;justify-content:space-between;font-size:9.5px;color:#94a3b8}
+    .sign .decl{flex:1;font-size:10px;color:#475569;line-height:1.45}
+    .sign .box{width:220px;text-align:center;flex:none}
+    .sign .box .space{height:42px}
+    .sign .box .line{border-top:1px solid ${secondary};padding-top:4px;font-size:10.5px;color:#334155;font-weight:500}
+    .tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:9px;font-weight:600;letter-spacing:.6px;text-transform:uppercase}
+    .brandfoot{margin-top:12px;padding-top:8px;border-top:1px dashed #cbd5e1;display:flex;justify-content:space-between;gap:12px;font-size:9.5px;color:#64748b}
   `;
 }
 
@@ -618,33 +635,41 @@ function buildClassicGstInvoiceHtml(sale: PrintableSale, shop: PrintableShop, au
   const kind = documentKind(sale, shop);
   const breakup = computeGstBreakup(sale);
   const logo = safeLogo(shop.logo);
-  const accent = '#0f172a';
+  const primary = safeHexColor(shop.brandColor, '#2563eb');
+  const secondary = safeHexColor(shop.secondaryColor, '#64748b');
   const party = partyBlock(sale, shop, kind);
   const stateLine = supplierStateLine(shop);
+  const initial = escapeHtml((shop.name || 'S').trim().charAt(0).toUpperCase());
 
-  const css = `${a4BaseCss(accent)}
-    .sheet{border:1.5px solid #0f172a;padding:18px 20px}
-    .topline{display:flex;justify-content:space-between;font-size:9.5px;color:#475569;text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px}
-    .head{display:flex;gap:14px;align-items:center;border-bottom:2px solid #0f172a;padding-bottom:12px}
-    .head img{width:74px;height:74px;object-fit:contain}
-    .head .who{flex:1}
-    .head h1{margin:0;font-size:20px;text-transform:uppercase;letter-spacing:.4px}
-    .head p{margin:1px 0;color:#334155}
-    .doc{text-align:right}
-    .doc .t{display:inline-block;border:2px solid #0f172a;padding:5px 14px;font-size:14px;font-weight:800;letter-spacing:2px}
-    .grid2{display:grid;grid-template-columns:1fr 1fr;border:1px solid #cbd5e1;border-top:0;margin-bottom:10px}
-    .grid2>div{padding:9px 11px}
-    .grid2>div+div{border-left:1px solid #cbd5e1}
-    .grid2 h4{margin:0 0 4px;font-size:9.5px;text-transform:uppercase;letter-spacing:.6px;color:#64748b}
-    .grid2 p{margin:1.5px 0}
-    .kv{display:flex;justify-content:space-between;gap:8px;padding:1.5px 0}
-    .kv span{color:#475569}
+  const css = `${a4BaseCss(primary, secondary)}
+    .sheet{border:1.5px solid #cbd5e1;border-top:5px solid ${primary};border-bottom:4px solid ${secondary};padding:20px 22px}
+    .topline{display:flex;justify-content:space-between;font-size:9.5px;color:#64748b;text-transform:uppercase;letter-spacing:.8px;margin-bottom:10px}
+    .head{display:grid;grid-template-columns:72px minmax(0,1fr) auto;gap:16px;align-items:start;background:#f8fafc;border:1px solid #cbd5e1;border-left:4px solid ${secondary};border-radius:10px;padding:14px 16px;margin-bottom:12px}
+    .logo-box{width:72px;height:72px;border-radius:10px;background:#fff;border:1px solid #cbd5e1;display:grid;place-items:center;overflow:hidden}
+    .logo-box img{width:100%;height:100%;object-fit:contain;padding:4px}
+    .logo-box span{font-size:26px;font-weight:600;color:${primary}}
+    .head .who{min-width:0}
+    .head h1{margin:0 0 4px;font-size:20px;font-weight:600;letter-spacing:-.02em;color:#0f172a;line-height:1.2}
+    .head p{margin:2px 0;color:#475569;font-size:11px;line-height:1.45}
+    .doc{text-align:right;min-width:170px}
+    .doc .t{display:inline-block;background:${primary};color:#fff;border-bottom:3px solid ${secondary};border-radius:6px;padding:6px 14px;font-size:11.5px;font-weight:600;letter-spacing:1.2px}
+    .doc .no{font-size:15px;font-weight:700;color:#0f172a;margin-top:6px}
+    .doc .dt{font-size:10.5px;color:#64748b;margin-top:2px}
+    .grid2{display:grid;grid-template-columns:1fr 1fr;border:1px solid #cbd5e1;border-radius:8px;overflow:hidden;margin-bottom:12px;background:#fff;align-items:stretch}
+    .grid2>div{padding:11px 13px}
+    .grid2>div+div{border-left:1px solid #cbd5e1;background:#f8fafc}
+    .grid2 h4{margin:0 0 6px;font-size:9.5px;text-transform:uppercase;letter-spacing:.6px;color:${primary};font-weight:600}
+    .grid2>div+div h4{color:${secondary}}
+    .grid2 p{margin:2px 0;line-height:1.45}
+    .kv{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:2.5px 0}
+    .kv span{color:#64748b;flex:none}
+    .kv b,.kv span:last-child{text-align:right;color:#0f172a}
   `;
 
   const body = `<div class="sheet">
     <div class="topline"><span>${kind.title === 'TAX INVOICE' ? 'Original for Recipient' : 'Customer copy'}</span><span>${kind.taxable ? 'Under Section 31 of CGST Act, 2017' : ''}</span></div>
     <div class="head">
-      ${logo ? `<img src="${logo}" alt="">` : ''}
+      <div class="logo-box">${logo ? `<img src="${logo}" alt="">` : `<span>${initial}</span>`}</div>
       <div class="who">
         <h1>${escapeHtml(shop.name)}</h1>
         ${shop.address ? `<p>${escapeHtml(shop.address)}</p>` : ''}
@@ -652,7 +677,11 @@ function buildClassicGstInvoiceHtml(sale: PrintableSale, shop: PrintableShop, au
         ${shop.gstin ? `<p><b>GSTIN: ${escapeHtml(shop.gstin)}</b>${stateLine ? ` · ${escapeHtml(stateLine)}` : ''}</p>` : (stateLine ? `<p>${escapeHtml(stateLine)}</p>` : '')}
         ${shop.fssai ? `<p>FSSAI Lic. No: ${escapeHtml(shop.fssai)}</p>` : ''}
       </div>
-      <div class="doc"><div class="t">${kind.title}</div></div>
+      <div class="doc">
+        <div class="t">${kind.title}</div>
+        <div class="no">${escapeHtml(sale.number)}</div>
+        <div class="dt">${escapeHtml(formatDate(sale.date))} · ${escapeHtml(formatTime(sale.date))}</div>
+      </div>
     </div>
     <div class="grid2"><div>${party.billTo}</div><div>${party.details}</div></div>
     ${buildA4ItemTable(sale, breakup, kind.taxable)}
@@ -666,53 +695,62 @@ function buildModernGstInvoiceHtml(sale: PrintableSale, shop: PrintableShop, aut
   const kind = documentKind(sale, shop);
   const breakup = computeGstBreakup(sale);
   const logo = safeLogo(shop.logo);
-  const accent = safeColor(shop.brandColor);
+  const primary = safeHexColor(shop.brandColor, '#2563eb');
+  const secondary = safeHexColor(shop.secondaryColor, '#64748b');
   const party = partyBlock(sale, shop, kind);
   const stateLine = supplierStateLine(shop);
   const initial = escapeHtml((shop.name || 'S').trim().charAt(0).toUpperCase());
 
-  const css = `${a4BaseCss(accent)}
-    .sheet{border-radius:14px;overflow:hidden}
-    .hero{position:relative;background:linear-gradient(135deg,#0f172a 0%,${accent} 100%);color:#fff;padding:22px 26px;display:flex;gap:16px;align-items:center;overflow:hidden}
-    .hero:after{content:"";position:absolute;right:-60px;top:-60px;width:220px;height:220px;border-radius:50%;background:rgba(255,255,255,.07)}
-    .hero:before{content:"";position:absolute;right:90px;bottom:-90px;width:180px;height:180px;border-radius:50%;background:rgba(255,255,255,.05)}
-    .mark{width:66px;height:66px;border-radius:14px;background:#fff;display:grid;place-items:center;flex:none;overflow:hidden;box-shadow:0 6px 18px rgba(0,0,0,.18)}
+  const css = `${a4BaseCss(primary, secondary)}
+    .sheet{border-radius:12px;overflow:hidden;border:1px solid #cbd5e1}
+    .topbar{height:6px;background:linear-gradient(90deg,${primary} 0%,${primary} 55%,${secondary} 55%,${secondary} 100%)}
+    .hero{background:#f1f5f9;border-bottom:1px solid #cbd5e1;padding:20px 24px;display:grid;grid-template-columns:72px minmax(0,1fr) auto;gap:18px;align-items:start}
+    .mark{width:72px;height:72px;border-radius:12px;background:#fff;border:1px solid #cbd5e1;display:grid;place-items:center;overflow:hidden;box-shadow:0 2px 8px rgba(15,23,42,.06)}
     .mark img{width:100%;height:100%;object-fit:contain;padding:5px}
-    .mark span{font-size:30px;font-weight:800;color:${accent}}
-    .hero .who{flex:1;position:relative;z-index:1}
-    .hero h1{margin:0 0 3px;font-size:21px;font-weight:800;letter-spacing:-.2px}
-    .hero p{margin:1px 0;font-size:11px;color:rgba(255,255,255,.82)}
-    .hero .doc{text-align:right;position:relative;z-index:1}
-    .pill{display:inline-block;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.35);padding:4px 11px;border-radius:999px;font-size:10px;font-weight:800;letter-spacing:1.4px}
-    .hero .no{font-size:17px;font-weight:800;margin-top:6px}
-    .content{padding:18px 24px 20px}
-    .cards{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px}
-    .card{background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px}
-    .card h4{margin:0 0 4px;font-size:9.5px;text-transform:uppercase;letter-spacing:.6px;color:${accent}}
-    .card p{margin:1.5px 0}
-    .kv{display:flex;justify-content:space-between;gap:8px;padding:1.5px 0}
-    .kv span{color:#475569}
+    .mark span{font-size:28px;font-weight:600;color:${primary}}
+    .hero .who{min-width:0}
+    .hero h1{margin:0 0 4px;font-size:21px;font-weight:600;letter-spacing:-.025em;color:#0f172a;line-height:1.2}
+    .hero p{margin:2px 0;font-size:11.5px;color:#475569;line-height:1.45}
+    .hero .contact-row{display:flex;flex-wrap:wrap;gap:10px;margin-top:3px;font-size:11px;color:#334155}
+    .hero .doc{text-align:right;min-width:190px;background:#ffffff;border:1px solid #cbd5e1;border-top:3px solid ${secondary};border-radius:10px;padding:11px 14px}
+    .pill{display:inline-block;background:${primary};color:#fff;padding:4px 11px;border-radius:999px;font-size:10px;font-weight:600;letter-spacing:1.2px}
+    .hero .no{font-size:16px;font-weight:700;margin-top:6px;color:#0f172a}
+    .hero .dt{font-size:10.5px;color:#64748b;margin-top:2px}
+    .content{padding:18px 24px 22px}
+    .cards{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;align-items:stretch}
+    .card{background:#f8fafc;border:1px solid #cbd5e1;border-radius:10px;padding:12px 14px}
+    .card h4{margin:0 0 6px;font-size:9.5px;text-transform:uppercase;letter-spacing:.6px;color:${primary};font-weight:600}
+    .card+.card h4{color:${secondary}}
+    .card p{margin:2px 0;line-height:1.45}
+    .kv{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:2px 0}
+    .kv span{color:#475569;flex:none}
+    .kv b,.kv span:last-child{text-align:right;color:#0f172a}
     .items{border-radius:8px;overflow:hidden}
     .paid{background:#dcfce7;color:#166534}
     .due{background:#fef3c7;color:#92400e}
   `;
 
   const paid = sale.paid >= sale.total;
+  const contactItems = [
+    shop.phone ? `<span>Tel: <b>${escapeHtml(shop.phone)}</b></span>` : '',
+    shop.email ? `<span>Email: <b>${escapeHtml(shop.email)}</b></span>` : '',
+  ].filter(Boolean).join('');
   const body = `<div class="sheet">
+    <div class="topbar"></div>
     <div class="hero">
       <div class="mark">${logo ? `<img src="${logo}" alt="">` : `<span>${initial}</span>`}</div>
       <div class="who">
         <h1>${escapeHtml(shop.name)}</h1>
         ${shop.address ? `<p>${escapeHtml(shop.address)}</p>` : ''}
-        <p>${[shop.phone ? `Tel ${escapeHtml(shop.phone)}` : '', shop.email ? escapeHtml(shop.email) : ''].filter(Boolean).join(' · ')}</p>
-        ${shop.gstin ? `<p><b style="color:#fff">GSTIN ${escapeHtml(shop.gstin)}</b>${stateLine ? ` · ${escapeHtml(stateLine)}` : ''}</p>` : ''}
-        ${shop.fssai ? `<p>FSSAI ${escapeHtml(shop.fssai)}</p>` : ''}
+        ${contactItems ? `<div class="contact-row">${contactItems}</div>` : ''}
+        ${shop.gstin ? `<p><b style="color:#1e293b">GSTIN: ${escapeHtml(shop.gstin)}</b>${stateLine ? ` · ${escapeHtml(stateLine)}` : ''}</p>` : (stateLine ? `<p>${escapeHtml(stateLine)}</p>` : '')}
+        ${shop.fssai ? `<p>FSSAI: ${escapeHtml(shop.fssai)}</p>` : ''}
       </div>
       <div class="doc">
         <div class="pill">${kind.title}</div>
         <div class="no">${escapeHtml(sale.number)}</div>
-        <p style="font-size:11px;color:rgba(255,255,255,.82);margin:2px 0">${escapeHtml(formatDate(sale.date))} · ${escapeHtml(formatTime(sale.date))}</p>
-        <span class="tag ${paid ? 'paid' : 'due'}" style="margin-top:4px">${paid ? 'Paid' : 'Balance due'}</span>
+        <p class="dt">${escapeHtml(formatDate(sale.date))} · ${escapeHtml(formatTime(sale.date))}</p>
+        <span class="tag ${paid ? 'paid' : 'due'}" style="margin-top:5px">${paid ? 'Paid' : 'Balance due'}</span>
       </div>
     </div>
     <div class="content">
