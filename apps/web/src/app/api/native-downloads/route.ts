@@ -23,6 +23,7 @@ export async function GET() {
       ?? pick(name => /\.exe$/i.test(name));
     const mac = pick(name => /\.dmg$/i.test(name));
     const android = pick(name => /\.apk$/i.test(name));
+    const ios = pick(name => /\.ipa$/i.test(name));
 
     return NextResponse.json({
       release: { name: release.name || release.tag_name, url: release.html_url },
@@ -30,6 +31,7 @@ export async function GET() {
         windows: windows && { name: windows.name, url: windows.browser_download_url },
         mac: mac && { name: mac.name, url: mac.browser_download_url },
         android: android && { name: android.name, url: android.browser_download_url },
+        ios: ios && { name: ios.name, url: ios.browser_download_url },
       },
     }, { headers: { 'Cache-Control': 'public, s-maxage=300' } });
   } catch {

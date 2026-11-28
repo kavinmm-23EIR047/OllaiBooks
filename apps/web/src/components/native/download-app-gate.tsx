@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { ArrowLeft, Download, HardDrive, Laptop, ShieldCheck, Smartphone, WifiOff } from 'lucide-react';
 import { SUPPORT } from '@/lib/native-app';
 
-type Downloads = { windows?: { name: string; url: string }; mac?: { name: string; url: string }; android?: { name: string; url: string } };
+type Downloads = { windows?: { name: string; url: string }; mac?: { name: string; url: string }; android?: { name: string; url: string }; ios?: { name: string; url: string } };
 
 /**
  * Shown in a normal web browser wherever offline features are requested.
@@ -55,10 +55,11 @@ export function DownloadAppGate({ reason = 'offline-billing' }: { reason?: 'offl
           </div>
         </div>
 
-        <div className="mt-6 grid gap-3 sm:grid-cols-3">
+        <div className="mt-6 grid gap-3 sm:grid-cols-2">
           {card(<Laptop className="h-5 w-5" />, 'Windows', 'Coming soon', downloads?.windows)}
           {card(<Smartphone className="h-5 w-5" />, 'Android', 'Coming soon', downloads?.android)}
           {card(<Laptop className="h-5 w-5" />, 'macOS', 'Coming soon', downloads?.mac)}
+          {card(<Smartphone className="h-5 w-5" />, 'iOS', 'Coming soon', downloads?.ios)}
         </div>
         {unavailable && <p className="mt-3 text-[12px] text-silver-600">Couldn’t load download links right now. Check your internet, or ask our team for the installer.</p>}
 
